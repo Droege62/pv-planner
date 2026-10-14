@@ -6,7 +6,7 @@
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
 <div class="card"><b>Tomorrow at a glance</b><table><tr><td>Expected house use before 16:00</td><td id="use16">—</td></tr><tr><td>Expected PV before 16:00</td><td id="pv16">—</td></tr><tr><td>Expected PV after 16:00</td><td id="pvAfter">—</td></tr><tr><td>Likely solar surplus after house use</td><td id="surplus">—</td></tr></table></div>
-<div class="card"><b>Inputs for tomorrow</b><div class="grid"><label>Battery SOC now (%)<input id="nowSoc" type="number" min="10" max="100" step="1" value="50"></label><button id="connectFox" type="button">Connect FOX Cloud</button><span id="foxStatus" class="small">Manual SOC</span><label>Expected house use (kWh/day)<input id="dailyUse" type="number" min=".5" max="20" step=".1" value="5.8"></label></div><button id="update">Update forecast & plan</button><div class="small">House-use profile is estimated hourly; change daily use if tomorrow will be unusual.</div></div>
+<div class="card"><b>Inputs for tomorrow</b><div class="grid"><label>Battery SOC now (%)<input id="nowSoc" type="number" min="10" max="100" step="1" value="50"></label><button id="connectFox" type="button">Connect FOX Cloud</button><button id="disconnectFox" type="button" hidden>Disconnect FOX Cloud</button><span id="foxStatus" class="small">Manual SOC</span><label>Expected house use (kWh/day)<input id="dailyUse" type="number" min=".5" max="20" step=".1" value="5.8"></label></div><button id="update">Update forecast & plan</button><div class="small">House-use profile is estimated hourly; change daily use if tomorrow will be unusual.</div></div>
 <div class="card"><b>System model</b><table><tr><td>PV array</td><td>6.565 kWp</td></tr><tr><td>Panels</td><td>13 × Prime 505 W</td></tr><tr><td>Battery</td><td>2 × EP6 = 11.52 kWh nominal</td></tr><tr><td>Battery operating window</td><td>10–100% SOC</td></tr><tr><td>Battery round-trip efficiency</td><td>≥95%</td></tr><tr><td>Inverter</td><td>FOX H1-6.0-E-G2 · 6 kW</td></tr><tr><td>Preferred battery power</td><td>4 kW</td></tr><tr><td>Panel temperature coefficient</td><td>−0.29%/°C</td></tr></table><div><span class="tag">No assumed bifacial gain</span><span class="tag">Hourly simulation</span><span class="tag">Two roof faces</span></div></div>
 <div class="card"><b>Flux assumptions</b><table><tr><td>Cheap import</td><td>14.67p/kWh</td></tr><tr><td>Day export</td><td>9.79p/kWh</td></tr><tr><td>16–19 export</td><td>27.81p/kWh</td></tr><tr><td>16:00 reserve target</td><td>25%</td></tr></table><div class="small">V2 charges overnight only enough to protect the 16:00 reserve under the forecast and expected house load. Deliberate grid-to-export arbitrage is not assumed.</div></div>
 <div class="card"><b>Calibration</b><p class="small">Enter actual FOX production after each day. V2 learns a bounded correction factor from recent entries.</p><input id="actual" type="number" min="0" step=".1" placeholder="Actual generation, e.g. 16.5 kWh"><button id="save">Save actual</button><div id="saved" class="small"></div></div>
@@ -23,37 +23,50 @@ function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]
 let b16=sim(now),need=Math.max(0,resK-b16),addSoc=need/C.batt,target=Math.min(1,now+addSoc),gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);target=Math.ceil(target*100/5)*5/100;gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);b16=sim(target);let uncertainty=Math.max(1,total*.15),use16=loads.slice(0,16).reduce((a,b)=>a+b,0),pv16=pv.slice(0,16).reduce((a,b)=>a+b,0),pvAfter=pv.slice(16).reduce((a,b)=>a+b,0),surplus=Math.max(0,total-use);$("forecast").textContent=total.toFixed(1)+" kWh";$("range").textContent="Likely range "+Math.max(0,total-uncertainty).toFixed(1)+"–"+(total+uncertainty).toFixed(1)+" kWh · calibration ×"+corr.toFixed(2);$("target").textContent=Math.round(target*100)+"% target";$("target").className="big "+(target<=.3?"good":"warn");$("import").textContent=gridImport<.1?"No overnight grid import needed":"Import about "+gridImport.toFixed(1)+" kWh overnight";$("peak").textContent=Math.round(b16/C.batt*100)+"%";$("peakKwh").textContent=b16.toFixed(1)+" kWh stored";$("use16").textContent=use16.toFixed(1)+" kWh";$("pv16").textContent=pv16.toFixed(1)+" kWh";$("pvAfter").textContent=pvAfter.toFixed(1)+" kWh";$("surplus").textContent=surplus.toFixed(1)+" kWh";$("action").textContent=gridImport<.1?"Don’t charge from grid":"Charge overnight";$("action").className="big "+(gridImport<.1?"good":"warn");$("actionWhy").textContent=gridImport<.1?"Current battery "+Math.round(now*100)+"% → predicted "+Math.round(b16/C.batt*100)+"% at 16:00. Solar should cover the reserve target.":"Charge to "+Math.round(target*100)+"% (about "+gridImport.toFixed(1)+" kWh from grid) to protect the 16:00 reserve.";localStorage.pvLastPred=total.toFixed(3)}catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
 $("update").onclick=run;$("save").onclick=()=>{let v=parseFloat($("actual").value),p=parseFloat(localStorage.pvLastPred);if(!isFinite(v)||!isFinite(p))return;let a=JSON.parse(localStorage.pvActualsV2||"[]");a.push({date:new Date().toISOString().slice(0,10),kwh:v,pred:p});a=a.slice(-30);localStorage.pvActualsV2=JSON.stringify(a);$("saved").textContent="Saved "+v.toFixed(1)+" kWh; future forecasts will use it.";run()};run();if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
-$("connectFox").onclick = async () => {
-  const token = prompt("Enter your PV access password (not your FOX API key):");
-  if (!token) return;
-
-  $("foxStatus").textContent = "Connecting...";
-
+const FOX_TOKEN_KEY = "pvFoxAccessToken";
+let foxRefreshBusy = false;
+function foxControls() { $("disconnectFox").hidden = !localStorage.getItem(FOX_TOKEN_KEY); }
+async function refreshFoxSOC(showError = false) {
+  const token = localStorage.getItem(FOX_TOKEN_KEY);
+  if (!token || foxRefreshBusy) return;
+  foxRefreshBusy = true;
+  $("foxStatus").textContent = "Updating FOX SOC...";
   try {
-    const response = await fetch(FOX_URL, {
-      headers: {
-        Authorization: "Bearer " + token
-      },
-      cache: "no-store"
-    });
-
+    const response = await fetch(FOX_URL, {headers: {Authorization: "Bearer " + token}, cache: "no-store"});
     if (!response.ok) throw new Error("HTTP " + response.status);
-
     const data = await response.json();
     const soc = Number(data.batterySOC);
-
-    if (data.batterySOC == null ||
-        !Number.isFinite(soc) ||
-        soc < 0 || soc > 100) {
-      throw new Error("Invalid battery SOC");
-    }
-
+    if (data.batterySOC == null || !Number.isFinite(soc) || soc < 0 || soc > 100) throw new Error("Invalid battery SOC");
     $("nowSoc").value = soc;
     $("foxStatus").textContent = "FOX connected: " + soc + "%";
     run();
   } catch (error) {
-    $("foxStatus").textContent = "FOX unavailable - enter SOC manually";
-    alert("FOX connection failed: " + error.message);
+    if (error.message === "HTTP 401" || error.message === "HTTP 403") {
+      localStorage.removeItem(FOX_TOKEN_KEY);
+      foxControls();
+      $("foxStatus").textContent = "FOX login expired - reconnect";
+    } else {
+      $("foxStatus").textContent = "FOX unavailable - enter SOC manually";
+    }
+    if (showError) alert("FOX connection failed: " + error.message);
+  } finally {
+    foxRefreshBusy = false;
   }
+}
+$("connectFox").onclick = async () => {
+  const token = prompt("Enter your PV access password (not your FOX API key):");
+  if (!token) return;
+  localStorage.setItem(FOX_TOKEN_KEY, token);
+  foxControls();
+  await refreshFoxSOC(true);
 };
+$("disconnectFox").onclick = () => {
+  localStorage.removeItem(FOX_TOKEN_KEY);
+  foxControls();
+  $("foxStatus").textContent = "Manual SOC";
+};
+foxControls();
+if (localStorage.getItem(FOX_TOKEN_KEY)) refreshFoxSOC();
+setInterval(() => { if (!document.hidden) refreshFoxSOC(); }, 5 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshFoxSOC(); });
 </script></body></html>

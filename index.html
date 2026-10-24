@@ -113,8 +113,9 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
     }
     // Optional off-peak grid charge; caller determines permitted time slots.
     const requestedCharge = Math.max(0, Number(slot.gridChargeKwh ?? 0));
-    const charge = Math.min(requestedCharge, C.preferred * duration,
-      (capacity - stored) / C.chargeEff);
+    const chargeTarget = capacity * Math.max(C.minSoc, Math.min(1, Number(slot.gridChargeTargetSoc ?? 1)));
+    const charge = Math.max(0, Math.min(requestedCharge, C.preferred * duration,
+      (chargeTarget - stored) / C.chargeEff));
     stored += charge * C.chargeEff;
     gridImportKwh += charge;
     timeline.push({soc: 100 * stored / capacity, storedKwh: stored,
@@ -170,25 +171,41 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
       usefulSolarStart = start;
     slots.push({pvKwh:pvKw*elapsed,houseKwh:houseKw*elapsed,
       durationHours:elapsed,forceExport:localDay===todayKey &&
-      uk.hour>=16 && uk.hour<19});
+      uk.hour>=16 && uk.hour<19,
+      offPeakNight:localDay===targetKey && uk.hour>=2 && uk.hour<5});
   }
   if (!slots.length) throw new Error('No forecast hours available');
-  const result = simulateBatteryTimeline(startSoc,slots,{exportCutoff:.25});
-  return {result,usefulSolarStart,slotCount:slots.length};
+  const noNightCharge = simulateBatteryTimeline(startSoc,slots,{exportCutoff:.25});
+  // Comparison scenario: charge toward 80% during the 02:00–05:00 window.
+  // The battery may reach less than 80% if the remaining window is too short.
+  const nightSlots = slots.map(slot => ({
+    ...slot,
+    gridChargeKwh:slot.offPeakNight ? C.preferred * slot.durationHours : 0,
+    gridChargeTargetSoc:.80
+  }));
+  const withNightCharge = simulateBatteryTimeline(startSoc,nightSlots,{exportCutoff:.25});
+  return {noNightCharge,withNightCharge,usefulSolarStart,slotCount:slots.length};
 }
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),measured=getHourlyLoads(),localMeasured=measured?getLocalHourlyLoads(measured,d):null,loads=w.map((x,h)=>localMeasured&&localMeasured[h]!==null?localMeasured[h]:x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
-// Full-horizon diagnostic uses current SOC and UTC-aligned forecast hours.
-// Grid charging is deliberately disabled until the charging strategy is implemented.
-simulateFromNowToTomorrow16(now, measured, use, corr).then(({result,usefulSolarStart,slotCount}) => {
-  $("v3FullHorizon").textContent = "From current FOX SOC to tomorrow 16:00: " +
-    result.endSoc.toFixed(0) + "% SOC; grid import " +
-    result.gridImportKwh.toFixed(1) + " kWh; " +
-    "forecast useful solar begins " +
-    (usefulSolarStart ? usefulSolarStart.toLocaleTimeString("en-GB",
-      {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) : "not predicted") +
-    " (modelled " + slotCount + " hours).";
-}).catch(err => {
+// Comparison diagnostic only: both cases retain the same 25% export cutoff.
+simulateFromNowToTomorrow16(now, measured, use, corr).then(
+  ({noNightCharge,withNightCharge,usefulSolarStart,slotCount}) => {
+    const solarTime = usefulSolarStart ?
+      usefulSolarStart.toLocaleTimeString("en-GB",
+        {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) :
+      "not predicted";
+    $("v3FullHorizon").textContent =
+      "Skip 02:00–05:00 charge: 16:00 SOC " + noNightCharge.endSoc.toFixed(0) +
+      "%; grid import " + noNightCharge.gridImportKwh.toFixed(1) + " kWh. " +
+      "Charge toward 80% overnight: 16:00 SOC " +
+      withNightCharge.endSoc.toFixed(0) + "%; grid import " +
+      withNightCharge.gridImportKwh.toFixed(1) + " kWh. " +
+      "Useful solar expected from " + solarTime +
+      ". Modelled " + slotCount + " hourly slots. " +
+      "Diagnostic only; not yet optimised for tariff or 100% target.";
+  }
+).catch(err => {
   $("v3FullHorizon").textContent = "Full-horizon diagnostic unavailable: " + err.message;
 });
 // Exercise the new engine against the actual hourly PV and consumption forecasts.

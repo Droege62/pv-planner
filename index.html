@@ -127,7 +127,7 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
     cheapChargeKwh += charge;
     if (charge > .005) importEvents.push({time:slot.localLabel || "unknown",kwh:charge,type:"charge"});
     timeline.push({soc: 100 * stored / capacity, storedKwh: stored,
-      gridImportKwh, gridExportKwh});
+      gridImportKwh, gridExportKwh, localLabel:slot.localLabel});
   }
   return {endSoc: 100 * stored / capacity, gridImportKwh,
     gridExportKwh, unmetHouseKwh, cheapChargeKwh, peakHouseImportKwh,
@@ -217,6 +217,16 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",
         {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) : "not predicted";
+    const chosenTimeline = chosen.timeline;
+    const socAt = label => {
+      const i=chosenTimeline.findIndex(x=>x.localLabel===label);
+      return i<0 ? "unavailable" : (i===0 ? now*100 : chosenTimeline[i-1].soc).toFixed(0)+"%";
+    };
+    const checkpoints = "SOC at 02:00: "+socAt("02:00 tomorrow")+
+      "; at 05:00: "+socAt("05:00 tomorrow")+
+      "; at useful solar start ("+solarTime+"): "+
+      socAt((usefulSolarStart ? String(Number(solarTime.slice(0,2))).padStart(2,"0") : "--")+":00 tomorrow")+
+      "; at 16:00: "+chosen.endSoc.toFixed(0)+"%. ";
     const importSummary = result => result.importEvents
       .filter(e=>e.type==="house").map(e=>e.time+" "+fmt(e.kwh)+" kWh")
       .join("; ") || "none";
@@ -241,7 +251,7 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
       chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
-    $("v3FullHorizon").textContent =
+    $("v3FullHorizon").textContent = checkpoints +
       "Skip overnight: 16:00 SOC " + fmt(noNightCharge.endSoc) +
       "%, household grid import " + fmt(noNightCharge.unmetHouseKwh) +
       " kWh (outside off-peak " + fmt(noNightCharge.peakHouseImportKwh) +

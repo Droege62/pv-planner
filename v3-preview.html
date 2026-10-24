@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1220"><link rel="manifest" href="manifest.json"><title>PV Planner V3 — TEST PREVIEW</title>
 <style>:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef2ff;background:#0b1220}*{box-sizing:border-box}body{margin:0;padding:18px;max-width:820px;margin:auto}.sub,.small{color:#a9b6ce}.small{font-size:.86rem}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{background:#151f32;border:1px solid #27344c;border-radius:16px;padding:16px;margin:12px 0}.big{font-size:2rem;font-weight:700}.good{color:#6ee7a8}.warn{color:#ffd166}button{width:100%;border:0;border-radius:12px;padding:14px;font-size:1rem;font-weight:700;margin-top:8px}input{width:100%;padding:10px;border-radius:10px;background:#0b1220;color:#fff;border:1px solid #40506b}table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px solid #27344c}label{display:block;margin:8px 0}.tag{display:inline-block;padding:4px 8px;border:1px solid #40506b;border-radius:999px;margin:3px;font-size:.8rem}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body>
-<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — the overnight charge recommendation is experimental. The original charging plan below still uses the old 25% reserve logic; do not rely on it yet.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
+<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — V3 overnight charging advice is experimental; do not apply automatically.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
 <div class="card"><div class="small">Tomorrow's PV forecast</div><div id="forecast" class="big">—</div><div id="range" class="sub">Calculating…</div></div>
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
@@ -223,6 +223,27 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
     const importSummary = result => result.importEvents
       .filter(e=>e.type==="house").map(e=>e.time+" "+fmt(e.kwh)+" kWh")
       .join("; ") || "none";
+    // The V3 recommendation uses the complete current-to-tomorrow timeline.
+    // Never use the legacy 25%-reserve estimate as the visible advice.
+    const skip = noNightCharge.endSoc >= 99.5;
+    const chosen = skip ? noNightCharge : (minimumResult || maxNightCharge);
+    const plannedTarget = skip ? null : (minimumTarget === null ? 1 : minimumTarget);
+    const gridKwh = skip ? 0 : chosen.cheapChargeKwh;
+    $("action").textContent = skip ? "Skip overnight charging" :
+      minimumTarget !== null ? "Charge overnight" : "Charge overnight — target may be missed";
+    $("action").className = "big " + (skip ? "good" : "warn");
+    $("target").textContent = skip ? "No grid charge" :
+      Math.ceil(plannedTarget * 100) + "% overnight target";
+    $("target").className = "big " + (skip ? "good" : "warn");
+    $("import").textContent = skip ? "0.0 kWh planned grid charging" :
+      "Battery charging from grid: " + gridKwh.toFixed(1) + " kWh";
+    $("peak").textContent = chosen.endSoc.toFixed(0) + "%";
+    $("peakKwh").textContent = (chosen.endSoc * C.batt / 100).toFixed(1) + " kWh stored";
+    $("actionWhy").textContent = skip ?
+      "Solar forecast reaches ~100% by 16:00 without overnight grid charging." :
+      "Without charging: " + noNightCharge.endSoc.toFixed(0) +
+      "% by 16:00. With suggested overnight charging: " +
+      chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
     $("v3FullHorizon").textContent =
       "Skip overnight: 16:00 SOC " + fmt(noNightCharge.endSoc) +
       "%, household grid import " + fmt(noNightCharge.unmetHouseKwh) +
@@ -258,7 +279,14 @@ $("v3SimDiagnostic").textContent =
   "simulated 16:00 SOC " + testResult.endSoc.toFixed(0) + "%; " +
   "grid import " + testResult.gridImportKwh.toFixed(1) + " kWh.";
 function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]-loads[h];if(net>=0)b=Math.min(C.batt,b+Math.min(net,C.preferred)*C.chargeEff);else b=Math.max(minK,b-Math.min(-net,C.preferred)/C.dischargeEff);if(h===15)b16=b}return b16}
-let b16=sim(now),need=Math.max(0,resK-b16),addSoc=need/C.batt,target=Math.min(1,now+addSoc),gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);target=Math.ceil(target*100/5)*5/100;gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);b16=sim(target);let uncertainty=Math.max(1,total*.15),use16=loads.slice(0,16).reduce((a,b)=>a+b,0),pv16=pv.slice(0,16).reduce((a,b)=>a+b,0),pvAfter=pv.slice(16).reduce((a,b)=>a+b,0),surplus=Math.max(0,total-use);$("forecast").textContent=total.toFixed(1)+" kWh";$("range").textContent="Likely range "+Math.max(0,total-uncertainty).toFixed(1)+"–"+(total+uncertainty).toFixed(1)+" kWh · calibration ×"+corr.toFixed(2);$("target").textContent=Math.round(target*100)+"% target";$("target").className="big "+(target<=.3?"good":"warn");$("import").textContent=gridImport<.1?"No overnight grid import needed":"Import about "+gridImport.toFixed(1)+" kWh overnight";$("peak").textContent=Math.round(b16/C.batt*100)+"%";$("peakKwh").textContent=b16.toFixed(1)+" kWh stored";$("use16").textContent=use16.toFixed(1)+" kWh";$("pv16").textContent=pv16.toFixed(1)+" kWh";$("pvAfter").textContent=pvAfter.toFixed(1)+" kWh";$("surplus").textContent=surplus.toFixed(1)+" kWh";$("action").textContent=gridImport<.1?"Don’t charge from grid":"Charge overnight";$("action").className="big "+(gridImport<.1?"good":"warn");$("actionWhy").textContent=gridImport<.1?"Current battery "+Math.round(now*100)+"% → predicted "+Math.round(b16/C.batt*100)+"% at 16:00. Solar should cover the reserve target.":"Charge to "+Math.round(target*100)+"% (about "+gridImport.toFixed(1)+" kWh from grid) to protect the 16:00 reserve.";localStorage.pvLastPred=total.toFixed(3)}catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
+let b16=sim(now),need=Math.max(0,resK-b16),addSoc=need/C.batt,target=Math.min(1,now+addSoc),gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);target=Math.ceil(target*100/5)*5/100;gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);b16=sim(target);let uncertainty=Math.max(1,total*.15),use16=loads.slice(0,16).reduce((a,b)=>a+b,0),pv16=pv.slice(0,16).reduce((a,b)=>a+b,0),pvAfter=pv.slice(16).reduce((a,b)=>a+b,0),surplus=Math.max(0,total-use);$("forecast").textContent=total.toFixed(1)+" kWh";$("range").textContent="Likely range "+Math.max(0,total-uncertainty).toFixed(1)+"–"+(total+uncertainty).toFixed(1)+" kWh · calibration ×"+corr.toFixed(2);$("target").textContent=Math.round(target*100)+"% target";$("target").className="big "+(target<=.3?"good":"warn");$("import").textContent=gridImport<.1?"No overnight grid import needed":"Import about "+gridImport.toFixed(1)+" kWh overnight";$("peak").textContent=Math.round(b16/C.batt*100)+"%";$("peakKwh").textContent=b16.toFixed(1)+" kWh stored";$("use16").textContent=use16.toFixed(1)+" kWh";$("pv16").textContent=pv16.toFixed(1)+" kWh";$("pvAfter").textContent=pvAfter.toFixed(1)+" kWh";$("surplus").textContent=surplus.toFixed(1)+" kWh";$("action").textContent=gridImport<.1?"Don’t charge from grid":"Charge overnight";$("action").className="big "+(gridImport<.1?"good":"warn");$("actionWhy").textContent=gridImport<.1?"Current battery "+Math.round(now*100)+"% → predicted "+Math.round(b16/C.batt*100)+"% at 16:00. Solar should cover the reserve target.":"Charge to "+Math.round(target*100)+"% (about "+gridImport.toFixed(1)+" kWh from grid) to protect the 16:00 reserve.";localStorage.pvLastPred=total.toFixed(3);
+$("action").textContent="Calculating V3 recommendation…";
+$("target").textContent="Calculating…";
+$("import").textContent="Checking 02:00–05:00 charging";
+$("peak").textContent="…";
+$("peakKwh").textContent="Full-horizon forecast pending";
+$("actionWhy").textContent="Using current SOC, forecast solar and FOX household consumption.";
+}catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
 $("update").onclick=run;$("save").onclick=()=>{let v=parseFloat($("actual").value),p=parseFloat(localStorage.pvLastPred);if(!isFinite(v)||!isFinite(p))return;let a=JSON.parse(localStorage.pvActualsV2||"[]");a.push({date:new Date().toISOString().slice(0,10),kwh:v,pred:p});a=a.slice(-30);localStorage.pvActualsV2=JSON.stringify(a);$("saved").textContent="Saved "+v.toFixed(1)+" kWh; future forecasts will use it.";run()};run();/* Preview: no service worker */
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =

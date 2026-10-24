@@ -85,7 +85,7 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
   const cutoff = Math.max(C.minSoc, Math.min(1, options.exportCutoff ?? 0.25));
   let stored = capacity * Math.max(C.minSoc, Math.min(1, startSoc));
   let gridImportKwh = 0, gridExportKwh = 0, unmetHouseKwh = 0;
-  let cheapChargeKwh = 0, peakHouseImportKwh = 0, cheapHouseImportKwh = 0;
+  let cheapChargeKwh = 0, peakHouseImportKwh = 0, cheapHouseImportKwh = 0, forcedExportKwh = 0;
   const importEvents = [];
   const timeline = [];
   for (const slot of slots) {
@@ -116,6 +116,7 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
       const exportEnergy = Math.min(available, C.preferred * duration);
       stored -= exportEnergy / C.dischargeEff;
       gridExportKwh += exportEnergy;
+      forcedExportKwh += exportEnergy;
     }
     // Optional off-peak grid charge; caller determines permitted time slots.
     const requestedCharge = Math.max(0, Number(slot.gridChargeKwh ?? 0));
@@ -131,7 +132,7 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
   }
   return {endSoc: 100 * stored / capacity, gridImportKwh,
     gridExportKwh, unmetHouseKwh, cheapChargeKwh, peakHouseImportKwh,
-    cheapHouseImportKwh, importEvents, timeline};
+    cheapHouseImportKwh, forcedExportKwh, importEvents, timeline};
 }
 // Create a chronological UTC timeline so BST/GMT changes cannot duplicate
 // or omit elapsed hours. This is a diagnostic, not a tariff optimiser.

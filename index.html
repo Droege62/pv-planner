@@ -205,15 +205,24 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
     minimumTarget=high;
     minimumResult=simulateTarget(high);
   }
+  const comparisons = slots.some(x=>x.forceExport) ?
+    Array.from({length:19},(_,i)=>10+i*5).map(pct=>({
+      pct,result:simulateBatteryTimeline(startSoc,slots,{exportCutoff:pct/100})
+    })) : [];
+  const leastImport = comparisons.length ?
+    Math.min(...comparisons.map(x=>x.result.peakHouseImportKwh)) : 0;
+  const cutoffAdvice = comparisons.find(x=>x.result.peakHouseImportKwh<=leastImport+.05);
+  const cutoffBaseline = comparisons.find(x=>x.pct===25);
   return {noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
-    minimumResult,usefulSolarStart,slotCount:slots.length};
+    minimumResult,usefulSolarStart,slotCount:slots.length,
+    cutoffAdvice,cutoffBaseline};
 }
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),measured=getHourlyLoads(),localMeasured=measured?getLocalHourlyLoads(measured,d):null,loads=w.map((x,h)=>localMeasured&&localMeasured[h]!==null?localMeasured[h]:x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
 // Comparison diagnostic only; grid charge occurs in the 02:00–05:00 window.
 simulateFromNowToTomorrow16(now, measured, use, corr).then(
   ({noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
-    minimumResult,usefulSolarStart,slotCount}) => {
+    minimumResult,usefulSolarStart,slotCount,cutoffAdvice,cutoffBaseline}) => {
     const fmt = n => n.toFixed(1);
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",
@@ -252,7 +261,16 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
       chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
-    $("v3FullHorizon").textContent = checkpoints +
+    const cutoffText = cutoffAdvice && cutoffBaseline ?
+      "Evening cutoff diagnostic: current 25% exports "+
+      fmt(cutoffBaseline.result.forcedExportKwh)+" kWh, non-cheap household import "+
+      fmt(cutoffBaseline.result.peakHouseImportKwh)+" kWh. Candidate "+
+      cutoffAdvice.pct+"% exports "+fmt(cutoffAdvice.result.forcedExportKwh)+
+      " kWh, non-cheap household import "+
+      fmt(cutoffAdvice.result.peakHouseImportKwh)+
+      " kWh. Not yet financially optimised. " :
+      "Cutoff comparison not available after today's export window. ";
+    $("v3FullHorizon").textContent = cutoffText + checkpoints +
       "Skip overnight: 16:00 SOC " + fmt(noNightCharge.endSoc) +
       "%, household grid import " + fmt(noNightCharge.unmetHouseKwh) +
       " kWh (outside off-peak " + fmt(noNightCharge.peakHouseImportKwh) +

@@ -17,6 +17,31 @@ const $=x=>document.getElementById(x);
 function sun(t){let d=(t-new Date(Date.UTC(t.getUTCFullYear(),0,0)))/864e5,g=2*Math.PI/365*(d-1+(t.getUTCHours()-12)/24),dc=.006918-.399912*Math.cos(g)+.070257*Math.sin(g)-.006758*Math.cos(2*g)+.000907*Math.sin(2*g)-.002697*Math.cos(3*g)+.00148*Math.sin(3*g),eq=229.18*(.000075+.001868*Math.cos(g)-.032077*Math.sin(g)-.014615*Math.cos(2*g)-.040849*Math.sin(2*g)),ha=(t.getUTCHours()*60+t.getUTCMinutes()+eq+4*C.lon)/4-180,la=C.lat*Math.PI/180,h=ha*Math.PI/180,cz=Math.sin(la)*Math.sin(dc)+Math.cos(la)*Math.cos(dc)*Math.cos(h),el=Math.asin(Math.max(-1,Math.min(1,cz))),az=Math.atan2(Math.sin(h),Math.cos(h)*Math.sin(la)-Math.tan(dc)*Math.cos(la))+Math.PI;return{el,az}}
 function poa(ghi,t,azDeg){let p=sun(t);if(p.el<=0)return 0;let ti=C.tilt*Math.PI/180,az=azDeg*Math.PI/180,ci=Math.sin(p.el)*Math.cos(ti)+Math.cos(p.el)*Math.sin(ti)*Math.cos(p.az-az),beam=Math.max(0,ci/Math.max(.12,Math.sin(p.el)));return ghi*(.72*beam+.28*(1+Math.cos(ti))/2)}
 function loadWeights(){return [.028,.025,.024,.023,.023,.027,.04,.055,.055,.045,.04,.038,.04,.04,.04,.042,.05,.065,.07,.065,.055,.045,.038,.027]}
+  function getHourlyLoads() {
+  if (foxConsumptionProfile &&
+      foxConsumptionProfile.length === 24) {
+
+    const hours = Array(24).fill(null);
+
+    for (const item of foxConsumptionProfile) {
+      const h = Number(item.utc_hour);
+      const power = Number(item.avg_power_kw);
+
+      if (!Number.isInteger(h) || h < 0 || h > 23 ||
+          !Number.isFinite(power) || power < 0) {
+        return null;
+      }
+
+      hours[h] = power;
+    }
+
+    if (hours.every(v => v !== null)) {
+      return hours;
+    }
+  }
+
+  return null;
+}
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),loads=w.map(x=>x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
 function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]-loads[h];if(net>=0)b=Math.min(C.batt,b+Math.min(net,C.preferred)*C.chargeEff);else b=Math.max(minK,b-Math.min(-net,C.preferred)/C.dischargeEff);if(h===15)b16=b}return b16}

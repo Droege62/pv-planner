@@ -23,6 +23,44 @@ function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]
 let b16=sim(now),need=Math.max(0,resK-b16),addSoc=need/C.batt,target=Math.min(1,now+addSoc),gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);target=Math.ceil(target*100/5)*5/100;gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);b16=sim(target);let uncertainty=Math.max(1,total*.15),use16=loads.slice(0,16).reduce((a,b)=>a+b,0),pv16=pv.slice(0,16).reduce((a,b)=>a+b,0),pvAfter=pv.slice(16).reduce((a,b)=>a+b,0),surplus=Math.max(0,total-use);$("forecast").textContent=total.toFixed(1)+" kWh";$("range").textContent="Likely range "+Math.max(0,total-uncertainty).toFixed(1)+"–"+(total+uncertainty).toFixed(1)+" kWh · calibration ×"+corr.toFixed(2);$("target").textContent=Math.round(target*100)+"% target";$("target").className="big "+(target<=.3?"good":"warn");$("import").textContent=gridImport<.1?"No overnight grid import needed":"Import about "+gridImport.toFixed(1)+" kWh overnight";$("peak").textContent=Math.round(b16/C.batt*100)+"%";$("peakKwh").textContent=b16.toFixed(1)+" kWh stored";$("use16").textContent=use16.toFixed(1)+" kWh";$("pv16").textContent=pv16.toFixed(1)+" kWh";$("pvAfter").textContent=pvAfter.toFixed(1)+" kWh";$("surplus").textContent=surplus.toFixed(1)+" kWh";$("action").textContent=gridImport<.1?"Don’t charge from grid":"Charge overnight";$("action").className="big "+(gridImport<.1?"good":"warn");$("actionWhy").textContent=gridImport<.1?"Current battery "+Math.round(now*100)+"% → predicted "+Math.round(b16/C.batt*100)+"% at 16:00. Solar should cover the reserve target.":"Charge to "+Math.round(target*100)+"% (about "+gridImport.toFixed(1)+" kWh from grid) to protect the 16:00 reserve.";localStorage.pvLastPred=total.toFixed(3)}catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
 $("update").onclick=run;$("save").onclick=()=>{let v=parseFloat($("actual").value),p=parseFloat(localStorage.pvLastPred);if(!isFinite(v)||!isFinite(p))return;let a=JSON.parse(localStorage.pvActualsV2||"[]");a.push({date:new Date().toISOString().slice(0,10),kwh:v,pred:p});a=a.slice(-30);localStorage.pvActualsV2=JSON.stringify(a);$("saved").textContent="Saved "+v.toFixed(1)+" kWh; future forecasts will use it.";run()};run();if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
+  const FOX_PROFILE_URL =
+  "https://fox-pv-connector.peter-droegemueller.workers.dev/consumption-profile";
+
+let foxConsumptionProfile = null;
+  async function fetchFoxConsumptionProfile() {
+  const token = localStorage.getItem("pvFoxAccessToken");
+
+  if (!token) return null;
+
+  try {
+    const response = await fetch(FOX_PROFILE_URL, {
+      headers: {
+        Authorization: "Bearer " + token
+      },
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    const data = await response.json();
+
+    if (!Array.isArray(data.hours) || data.hours.length !== 24) {
+      throw new Error("Incomplete hourly consumption profile");
+    }
+
+    foxConsumptionProfile = data.hours;
+    console.log("FOX consumption profile loaded:", foxConsumptionProfile);
+
+    return foxConsumptionProfile;
+
+  } catch (error) {
+    console.warn("FOX consumption profile unavailable:", error);
+    return null;
+  }
+}
+  fetchFoxConsumptionProfile();
 const FOX_TOKEN_KEY = "pvFoxAccessToken";
 let foxRefreshBusy = false;
 function foxControls() { $("disconnectFox").hidden = !localStorage.getItem(FOX_TOKEN_KEY); }

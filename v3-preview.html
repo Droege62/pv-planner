@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1220"><link rel="manifest" href="manifest.json"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><title>PV Planner V3 — TEST PREVIEW</title>
 <style>:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef2ff;background:#0b1220}*{box-sizing:border-box}body{margin:0;padding:18px;max-width:820px;margin:auto}.sub,.small{color:#a9b6ce}.small{font-size:.86rem}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{background:#151f32;border:1px solid #27344c;border-radius:16px;padding:16px;margin:12px 0}.big{font-size:2rem;font-weight:700}.good{color:#6ee7a8}.warn{color:#ffd166}button{width:100%;border:0;border-radius:12px;padding:14px;font-size:1rem;font-weight:700;margin-top:8px}input{width:100%;padding:10px;border-radius:10px;background:#0b1220;color:#fff;border:1px solid #40506b}table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px solid #27344c}label{display:block;margin:8px 0}.tag{display:inline-block;padding:4px 8px;border:1px solid #40506b;border-radius:999px;margin:3px;font-size:.8rem}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body>
-<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW · build 10</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — V3 overnight charging advice is experimental; do not apply automatically.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
+<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW · build 11</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — V3 overnight charging advice is experimental; do not apply automatically.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
 <div class="card"><div class="small">Tomorrow's PV forecast</div><div id="forecast" class="big">—</div><div id="range" class="sub">Calculating…</div></div>
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
@@ -206,17 +206,42 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
     minimumTarget=high;
     minimumResult=simulateTarget(high);
   }
-  const comparisons = slots.some(x=>x.forceExport) ?
+  // Tomorrow's export window, followed by evening household consumption
+  // until the next cheap charging window at 02:00.
+  const eveningSlots=[];
+  for(let i=0;i<weather.hourly.time.length;i++){
+    const start=new Date(weather.hourly.time[i]+":00Z");
+    const uk=localParts(start);
+    const localDay=Date.UTC(uk.year,uk.month-1,uk.day);
+    const nextDayKey=targetKey+86400000;
+    if(!((localDay===targetKey&&uk.hour>=16)||
+      (localDay===nextDayKey&&uk.hour<2)))continue;
+    const ghi=weather.hourly.shortwave_radiation[i]||0;
+    const amb=weather.hourly.temperature_2m[i]||10;
+    const p1=poa(ghi,start,C.az1)*C.n1*C.panelW/1000000;
+    const p2=poa(ghi,start,C.az2)*C.n2*C.panelW/1000000;
+    const irr=Math.max(0,(poa(ghi,start,C.az1)+poa(ghi,start,C.az2))/2);
+    const temp=Math.max(.75,1-.0029*Math.max(0,amb+.03*irr-25));
+    const pvKw=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*correction);
+    const houseKw=measured?measured[start.getUTCHours()]:oldWeights[uk.hour]*dailyUse;
+    eveningSlots.push({pvKwh:pvKw,houseKwh:houseKw,durationHours:1,
+      forceExport:localDay===targetKey&&uk.hour>=16&&uk.hour<19,
+      localLabel:String(uk.hour).padStart(2,"0")+":00"});
+  }
+  const eveningStart=(noNightCharge.endSoc>=99.5?noNightCharge:
+    minimumResult||maxNightCharge).endSoc/100;
+  const comparisons=eveningSlots.some(x=>x.forceExport)?
     Array.from({length:19},(_,i)=>10+i*5).map(pct=>({
-      pct,result:simulateBatteryTimeline(startSoc,slots,{exportCutoff:pct/100})
-    })) : [];
-  const leastImport = comparisons.length ?
-    Math.min(...comparisons.map(x=>x.result.peakHouseImportKwh)) : 0;
-  const cutoffAdvice = comparisons.find(x=>x.result.peakHouseImportKwh<=leastImport+.05);
-  const cutoffBaseline = comparisons.find(x=>x.pct===25);
+      pct,result:simulateBatteryTimeline(eveningStart,eveningSlots,{exportCutoff:pct/100})
+    })): [];
+  const cutoffBaseline=comparisons.find(x=>x.pct===25)||null;
+  // Show the complete trade-off. Exact monetary ranking needs both
+  // the standard import rate and the peak export rate.
+  const cutoffLow=comparisons[0]||null;
+  const cutoffHigh=comparisons.find(x=>x.pct===35)||null;
   return {noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
     minimumResult,usefulSolarStart,slotCount:slots.length,
-    cutoffAdvice,cutoffBaseline};
+    cutoffLow,cutoffHigh,cutoffBaseline,eveningStartSoc:eveningStart*100};
 }
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),measured=getHourlyLoads(),localMeasured=measured?getLocalHourlyLoads(measured,d):null,loads=w.map((x,h)=>localMeasured&&localMeasured[h]!==null?localMeasured[h]:x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
@@ -225,7 +250,8 @@ $("consumptionDetails").textContent = localMeasured && localMeasured.some(v => v
 // Comparison diagnostic only; grid charge occurs in the 02:00–05:00 window.
 simulateFromNowToTomorrow16(now, measured, use, corr).then(
   ({noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
-    minimumResult,usefulSolarStart,slotCount,cutoffAdvice,cutoffBaseline}) => {
+    minimumResult,usefulSolarStart,slotCount,cutoffLow,cutoffHigh,
+    cutoffBaseline,eveningStartSoc}) => {
     const fmt = n => n.toFixed(1);
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",
@@ -264,15 +290,18 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
       chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
-    const cutoffText = cutoffAdvice && cutoffBaseline ?
-      "Evening cutoff diagnostic: current 25% exports "+
-      fmt(cutoffBaseline.result.forcedExportKwh)+" kWh, non-cheap household import "+
-      fmt(cutoffBaseline.result.peakHouseImportKwh)+" kWh. Candidate "+
-      cutoffAdvice.pct+"% exports "+fmt(cutoffAdvice.result.forcedExportKwh)+
-      " kWh, non-cheap household import "+
-      fmt(cutoffAdvice.result.peakHouseImportKwh)+
-      " kWh. Not yet financially optimised. " :
-      "Cutoff comparison not available after today's export window. ";
+    const cutoffText = cutoffBaseline && cutoffLow && cutoffHigh ?
+      "Tomorrow 16:00–19:00 cutoff comparison (starting SOC "+
+      fmt(eveningStartSoc)+"%): 10% cutoff: peak forced export "+
+      fmt(cutoffLow.result.forcedExportKwh)+" kWh, household grid import before 02:00 "+
+      fmt(cutoffLow.result.peakHouseImportKwh)+" kWh; 25% cutoff: "+
+      fmt(cutoffBaseline.result.forcedExportKwh)+" kWh export, "+
+      fmt(cutoffBaseline.result.peakHouseImportKwh)+" kWh import; 35% cutoff: "+
+      fmt(cutoffHigh.result.forcedExportKwh)+" kWh export, "+
+      fmt(cutoffHigh.result.peakHouseImportKwh)+
+      " kWh import. Peak export exceeds cheap import by 10p/kWh; "+
+      "financial ranking still needs standard import and peak export prices. " :
+      "Tomorrow evening cutoff comparison unavailable. ";
     $("v3FullHorizon").textContent = cutoffText + checkpoints +
       "Skip overnight: 16:00 SOC " + fmt(noNightCharge.endSoc) +
       "%, household grid import " + fmt(noNightCharge.unmetHouseKwh) +

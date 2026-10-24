@@ -102,7 +102,7 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
     unmetHouseKwh += houseDeficit - batteryToHouse;
     gridImportKwh += houseDeficit - batteryToHouse;
     const houseGrid = houseDeficit - batteryToHouse;
-    if (slot.offPeakNight || slot.offPeakAfternoon) cheapHouseImportKwh += houseGrid;
+    if (slot.offPeakNight) cheapHouseImportKwh += houseGrid;
     else peakHouseImportKwh += houseGrid;
     if (houseGrid > .005) importEvents.push({time:slot.localLabel || "unknown",kwh:houseGrid,type:"house"});
     const solarToBattery = Math.min(solarSurplus, C.preferred * duration,
@@ -182,7 +182,6 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
       durationHours:elapsed,forceExport:localDay===todayKey &&
       uk.hour>=16 && uk.hour<19,
       offPeakNight:localDay===targetKey && uk.hour>=2 && uk.hour<5,
-      offPeakAfternoon:uk.hour>=14 && uk.hour<16,
       localLabel:String(uk.hour).padStart(2,"0")+":00 "+(localDay===todayKey?"today":"tomorrow")});
   }
   if (!slots.length) throw new Error('No forecast hours available');
@@ -195,7 +194,7 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
   const withNightCharge = simulateTarget(.80);
   const maxNightCharge = simulateTarget(1);
   let minimumTarget = null, minimumResult = null;
-  if (maxNightCharge.endSoc >= 99.5) {
+  if (noNightCharge.endSoc < 99.5 && maxNightCharge.endSoc >= 99.5) {
     let low=C.minSoc, high=1;
     for (let k=0;k<18;k++) {
       const mid=(low+high)/2;
@@ -229,11 +228,13 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Charge toward 80%: 16:00 SOC " + fmt(withNightCharge.endSoc) +
       "%, cheap battery charge " + fmt(withNightCharge.cheapChargeKwh) +
       " kWh, household grid import " + fmt(withNightCharge.unmetHouseKwh) + " kWh. " +
-      (minimumTarget !== null ?
-        "Minimum overnight SOC target for ~100% by 16:00: " +
+      (noNightCharge.endSoc >= 99.5 ?
+        "Recommendation: skip overnight charging; solar is sufficient to reach ~100% by 16:00." :
+       minimumTarget !== null ?
+        "Recommended minimum overnight SOC target for ~100% by 16:00: " +
         Math.ceil(minimumTarget*100) + "%, charging " +
         fmt(minimumResult.cheapChargeKwh) + " kWh." :
-        "100% by 16:00 is not achievable using overnight charging alone; " +
+        "100% by 16:00 is not achievable even with maximum overnight charging; " +
         "even charging toward 100% gives " + fmt(maxNightCharge.endSoc) + "%.") +
       " Useful solar starts around " + solarTime +
       ". " + slotCount + " forecast slots. Experimental only.";

@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1220"><link rel="manifest" href="manifest.json"><title>PV Planner V3 — TEST PREVIEW</title>
 <style>:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef2ff;background:#0b1220}*{box-sizing:border-box}body{margin:0;padding:18px;max-width:820px;margin:auto}.sub,.small{color:#a9b6ce}.small{font-size:.86rem}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{background:#151f32;border:1px solid #27344c;border-radius:16px;padding:16px;margin:12px 0}.big{font-size:2rem;font-weight:700}.good{color:#6ee7a8}.warn{color:#ffd166}button{width:100%;border:0;border-radius:12px;padding:14px;font-size:1rem;font-weight:700;margin-top:8px}input{width:100%;padding:10px;border-radius:10px;background:#0b1220;color:#fff;border:1px solid #40506b}table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px solid #27344c}label{display:block;margin:8px 0}.tag{display:inline-block;padding:4px 8px;border:1px solid #40506b;border-radius:999px;margin:3px;font-size:.8rem}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body>
-<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — comparison is diagnostic only. The existing charging recommendation still uses the old 25% reserve logic; do not rely on it yet.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
+<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — the overnight charge recommendation is experimental. The original charging plan below still uses the old 25% reserve logic; do not rely on it yet.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
 <div class="card"><div class="small">Tomorrow's PV forecast</div><div id="forecast" class="big">—</div><div id="range" class="sub">Calculating…</div></div>
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
@@ -86,6 +86,8 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
   const cutoff = Math.max(C.minSoc, Math.min(1, options.exportCutoff ?? 0.25));
   let stored = capacity * Math.max(C.minSoc, Math.min(1, startSoc));
   let gridImportKwh = 0, gridExportKwh = 0, unmetHouseKwh = 0;
+  let cheapChargeKwh = 0, peakHouseImportKwh = 0, cheapHouseImportKwh = 0;
+  const importEvents = [];
   const timeline = [];
   for (const slot of slots) {
     const duration = Math.max(0, Number(slot.durationHours ?? 1));
@@ -100,6 +102,10 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
     stored -= batteryToHouse / C.dischargeEff;
     unmetHouseKwh += houseDeficit - batteryToHouse;
     gridImportKwh += houseDeficit - batteryToHouse;
+    const houseGrid = houseDeficit - batteryToHouse;
+    if (slot.offPeakNight) cheapHouseImportKwh += houseGrid;
+    else peakHouseImportKwh += houseGrid;
+    if (houseGrid > .005) importEvents.push({time:slot.localLabel || "unknown",kwh:houseGrid,type:"house"});
     const solarToBattery = Math.min(solarSurplus, C.preferred * duration,
       (capacity - stored) / C.chargeEff);
     stored += solarToBattery * C.chargeEff;
@@ -119,11 +125,14 @@ function simulateBatteryTimeline(startSoc, slots, options = {}) {
       (chargeTarget - stored) / C.chargeEff));
     stored += charge * C.chargeEff;
     gridImportKwh += charge;
+    cheapChargeKwh += charge;
+    if (charge > .005) importEvents.push({time:slot.localLabel || "unknown",kwh:charge,type:"charge"});
     timeline.push({soc: 100 * stored / capacity, storedKwh: stored,
       gridImportKwh, gridExportKwh});
   }
   return {endSoc: 100 * stored / capacity, gridImportKwh,
-    gridExportKwh, unmetHouseKwh, timeline};
+    gridExportKwh, unmetHouseKwh, cheapChargeKwh, peakHouseImportKwh,
+    cheapHouseImportKwh, importEvents, timeline};
 }
 // Create a chronological UTC timeline so BST/GMT changes cannot duplicate
 // or omit elapsed hours. This is a diagnostic, not a tariff optimiser.
@@ -173,40 +182,65 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
     slots.push({pvKwh:pvKw*elapsed,houseKwh:houseKw*elapsed,
       durationHours:elapsed,forceExport:localDay===todayKey &&
       uk.hour>=16 && uk.hour<19,
-      offPeakNight:localDay===targetKey && uk.hour>=2 && uk.hour<5});
+      offPeakNight:localDay===targetKey && uk.hour>=2 && uk.hour<5,
+      localLabel:String(uk.hour).padStart(2,"0")+":00 "+(localDay===todayKey?"today":"tomorrow")});
   }
   if (!slots.length) throw new Error('No forecast hours available');
   const noNightCharge = simulateBatteryTimeline(startSoc,slots,{exportCutoff:.25});
-  // Comparison scenario: charge toward 80% during the 02:00–05:00 window.
-  // The battery may reach less than 80% if the remaining window is too short.
-  const nightSlots = slots.map(slot => ({
-    ...slot,
-    gridChargeKwh:slot.offPeakNight ? C.preferred * slot.durationHours : 0,
-    gridChargeTargetSoc:.80
-  }));
-  const withNightCharge = simulateBatteryTimeline(startSoc,nightSlots,{exportCutoff:.25});
-  return {noNightCharge,withNightCharge,usefulSolarStart,slotCount:slots.length};
+  const simulateTarget = target => simulateBatteryTimeline(startSoc,
+    slots.map(slot => ({...slot,
+      gridChargeKwh:slot.offPeakNight ? C.preferred * slot.durationHours : 0,
+      gridChargeTargetSoc:target
+    })),{exportCutoff:.25});
+  const withNightCharge = simulateTarget(.80);
+  const maxNightCharge = simulateTarget(1);
+  let minimumTarget = null, minimumResult = null;
+  if (noNightCharge.endSoc < 99.5 && maxNightCharge.endSoc >= 99.5) {
+    let low=C.minSoc, high=1;
+    for (let k=0;k<18;k++) {
+      const mid=(low+high)/2;
+      if (simulateTarget(mid).endSoc>=99.5) high=mid;
+      else low=mid;
+    }
+    minimumTarget=high;
+    minimumResult=simulateTarget(high);
+  }
+  return {noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
+    minimumResult,usefulSolarStart,slotCount:slots.length};
 }
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),measured=getHourlyLoads(),localMeasured=measured?getLocalHourlyLoads(measured,d):null,loads=w.map((x,h)=>localMeasured&&localMeasured[h]!==null?localMeasured[h]:x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
 $("consumptionSource").textContent = localMeasured && localMeasured.every(v => v !== null) ? "FOX 21-day average" : localMeasured && localMeasured.some(v => v !== null) ? "FOX + estimated fallback" : "Estimated fallback";
 $("consumptionDetails").textContent = localMeasured && localMeasured.some(v => v !== null) ? "Measured household consumption: " + loads.reduce((a,b)=>a+b,0).toFixed(1) + " kWh/day (UTC data aligned to UK time)" : "Using the original assumed hourly pattern";
-// Comparison diagnostic only: both cases retain the same 25% export cutoff.
+// Comparison diagnostic only; grid charge occurs in the 02:00–05:00 window.
 simulateFromNowToTomorrow16(now, measured, use, corr).then(
-  ({noNightCharge,withNightCharge,usefulSolarStart,slotCount}) => {
+  ({noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
+    minimumResult,usefulSolarStart,slotCount}) => {
+    const fmt = n => n.toFixed(1);
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",
-        {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) :
-      "not predicted";
+        {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) : "not predicted";
+    const importSummary = result => result.importEvents
+      .filter(e=>e.type==="house").map(e=>e.time+" "+fmt(e.kwh)+" kWh")
+      .join("; ") || "none";
     $("v3FullHorizon").textContent =
-      "Skip 02:00–05:00 charge: 16:00 SOC " + noNightCharge.endSoc.toFixed(0) +
-      "%; grid import " + noNightCharge.gridImportKwh.toFixed(1) + " kWh. " +
-      "Charge toward 80% overnight: 16:00 SOC " +
-      withNightCharge.endSoc.toFixed(0) + "%; grid import " +
-      withNightCharge.gridImportKwh.toFixed(1) + " kWh. " +
-      "Useful solar expected from " + solarTime +
-      ". Modelled " + slotCount + " hourly slots. " +
-      "Diagnostic only; not yet optimised for tariff or 100% target.";
+      "Skip overnight: 16:00 SOC " + fmt(noNightCharge.endSoc) +
+      "%, household grid import " + fmt(noNightCharge.unmetHouseKwh) +
+      " kWh (outside off-peak " + fmt(noNightCharge.peakHouseImportKwh) +
+      " kWh). Import times: " + importSummary(noNightCharge) + ". " +
+      "Charge toward 80%: 16:00 SOC " + fmt(withNightCharge.endSoc) +
+      "%, cheap battery charge " + fmt(withNightCharge.cheapChargeKwh) +
+      " kWh, household grid import " + fmt(withNightCharge.unmetHouseKwh) + " kWh. " +
+      (noNightCharge.endSoc >= 99.5 ?
+        "Recommendation: skip overnight charging; solar is sufficient to reach ~100% by 16:00." :
+       minimumTarget !== null ?
+        "Recommended minimum overnight SOC target for ~100% by 16:00: " +
+        Math.ceil(minimumTarget*100) + "%, charging " +
+        fmt(minimumResult.cheapChargeKwh) + " kWh." :
+        "100% by 16:00 is not achievable even with maximum overnight charging; " +
+        "even charging toward 100% gives " + fmt(maxNightCharge.endSoc) + "%.") +
+      " Useful solar starts around " + solarTime +
+      ". " + slotCount + " forecast slots. Experimental only.";
   }
 ).catch(err => {
   $("v3FullHorizon").textContent = "Full-horizon diagnostic unavailable: " + err.message;
@@ -225,7 +259,7 @@ $("v3SimDiagnostic").textContent =
   "grid import " + testResult.gridImportKwh.toFixed(1) + " kWh.";
 function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]-loads[h];if(net>=0)b=Math.min(C.batt,b+Math.min(net,C.preferred)*C.chargeEff);else b=Math.max(minK,b-Math.min(-net,C.preferred)/C.dischargeEff);if(h===15)b16=b}return b16}
 let b16=sim(now),need=Math.max(0,resK-b16),addSoc=need/C.batt,target=Math.min(1,now+addSoc),gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);target=Math.ceil(target*100/5)*5/100;gridImport=Math.max(0,(target-now)*C.batt/C.chargeEff);b16=sim(target);let uncertainty=Math.max(1,total*.15),use16=loads.slice(0,16).reduce((a,b)=>a+b,0),pv16=pv.slice(0,16).reduce((a,b)=>a+b,0),pvAfter=pv.slice(16).reduce((a,b)=>a+b,0),surplus=Math.max(0,total-use);$("forecast").textContent=total.toFixed(1)+" kWh";$("range").textContent="Likely range "+Math.max(0,total-uncertainty).toFixed(1)+"–"+(total+uncertainty).toFixed(1)+" kWh · calibration ×"+corr.toFixed(2);$("target").textContent=Math.round(target*100)+"% target";$("target").className="big "+(target<=.3?"good":"warn");$("import").textContent=gridImport<.1?"No overnight grid import needed":"Import about "+gridImport.toFixed(1)+" kWh overnight";$("peak").textContent=Math.round(b16/C.batt*100)+"%";$("peakKwh").textContent=b16.toFixed(1)+" kWh stored";$("use16").textContent=use16.toFixed(1)+" kWh";$("pv16").textContent=pv16.toFixed(1)+" kWh";$("pvAfter").textContent=pvAfter.toFixed(1)+" kWh";$("surplus").textContent=surplus.toFixed(1)+" kWh";$("action").textContent=gridImport<.1?"Don’t charge from grid":"Charge overnight";$("action").className="big "+(gridImport<.1?"good":"warn");$("actionWhy").textContent=gridImport<.1?"Current battery "+Math.round(now*100)+"% → predicted "+Math.round(b16/C.batt*100)+"% at 16:00. Solar should cover the reserve target.":"Charge to "+Math.round(target*100)+"% (about "+gridImport.toFixed(1)+" kWh from grid) to protect the 16:00 reserve.";localStorage.pvLastPred=total.toFixed(3)}catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
-$("update").onclick=run;$("save").onclick=()=>{let v=parseFloat($("actual").value),p=parseFloat(localStorage.pvLastPred);if(!isFinite(v)||!isFinite(p))return;let a=JSON.parse(localStorage.pvActualsV2||"[]");a.push({date:new Date().toISOString().slice(0,10),kwh:v,pred:p});a=a.slice(-30);localStorage.pvActualsV2=JSON.stringify(a);$("saved").textContent="Saved "+v.toFixed(1)+" kWh; future forecasts will use it.";run()};run();/* Preview: do not register a service worker */
+$("update").onclick=run;$("save").onclick=()=>{let v=parseFloat($("actual").value),p=parseFloat(localStorage.pvLastPred);if(!isFinite(v)||!isFinite(p))return;let a=JSON.parse(localStorage.pvActualsV2||"[]");a.push({date:new Date().toISOString().slice(0,10),kwh:v,pred:p});a=a.slice(-30);localStorage.pvActualsV2=JSON.stringify(a);$("saved").textContent="Saved "+v.toFixed(1)+" kWh; future forecasts will use it.";run()};run();/* Preview: no service worker */
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =
   "https://fox-pv-connector.peter-droegemueller.workers.dev/consumption-profile";

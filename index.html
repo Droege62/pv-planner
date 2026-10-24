@@ -217,6 +217,14 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",
         {timeZone:"Europe/London",hour:"2-digit",minute:"2-digit"}) : "not predicted";
+    const importSummary = result => result.importEvents
+      .filter(e=>e.type==="house").map(e=>e.time+" "+fmt(e.kwh)+" kWh")
+      .join("; ") || "none";
+    // The V3 recommendation uses the complete current-to-tomorrow timeline.
+    // Never use the legacy 25%-reserve estimate as the visible advice.
+    const skip = noNightCharge.endSoc >= 99.5;
+    const chosen = skip ? noNightCharge : (minimumResult || maxNightCharge);
+    const plannedTarget = skip ? null : (minimumTarget === null ? 1 : minimumTarget);
     const chosenTimeline = chosen.timeline;
     const socAt = label => {
       const i=chosenTimeline.findIndex(x=>x.localLabel===label);
@@ -227,14 +235,6 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "; at useful solar start ("+solarTime+"): "+
       socAt((usefulSolarStart ? String(Number(solarTime.slice(0,2))).padStart(2,"0") : "--")+":00 tomorrow")+
       "; at 16:00: "+chosen.endSoc.toFixed(0)+"%. ";
-    const importSummary = result => result.importEvents
-      .filter(e=>e.type==="house").map(e=>e.time+" "+fmt(e.kwh)+" kWh")
-      .join("; ") || "none";
-    // The V3 recommendation uses the complete current-to-tomorrow timeline.
-    // Never use the legacy 25%-reserve estimate as the visible advice.
-    const skip = noNightCharge.endSoc >= 99.5;
-    const chosen = skip ? noNightCharge : (minimumResult || maxNightCharge);
-    const plannedTarget = skip ? null : (minimumTarget === null ? 1 : minimumTarget);
     const gridKwh = skip ? 0 : chosen.cheapChargeKwh;
     $("action").textContent = skip ? "Skip overnight charging" :
       minimumTarget !== null ? "Charge overnight" : "Charge overnight — target may be missed";

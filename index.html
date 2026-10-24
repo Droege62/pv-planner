@@ -118,7 +118,7 @@ let foxConsumptionProfile = null;
     return null;
   }
 }
-  fetchFoxConsumptionProfile();
+  fetchFoxConsumptionProfile().then(profile => { if (profile) run(); });
 const FOX_TOKEN_KEY = "pvFoxAccessToken";
 let foxRefreshBusy = false;
 function foxControls() { $("disconnectFox").hidden = !localStorage.getItem(FOX_TOKEN_KEY); }

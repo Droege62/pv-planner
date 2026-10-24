@@ -75,6 +75,53 @@ function getLocalHourlyLoads(utcLoads, targetDate) {
     values.length ? values.reduce((a,b) => a+b, 0) / values.length : null
   );
 }
+// V3 simulation engine (not yet connected to the visible recommendation).
+// Each slot represents one hour, with energy in kWh. For partial hours,
+// supply prorated energy values and durationHours.
+function simulateBatteryTimeline(startSoc, slots, options = {}) {
+  const capacity = C.batt;
+  const floorKwh = capacity * C.minSoc;
+  const cutoff = Math.max(C.minSoc, Math.min(1, options.exportCutoff ?? 0.25));
+  let stored = capacity * Math.max(C.minSoc, Math.min(1, startSoc));
+  let gridImportKwh = 0, gridExportKwh = 0, unmetHouseKwh = 0;
+  const timeline = [];
+  for (const slot of slots) {
+    const duration = Math.max(0, Number(slot.durationHours ?? 1));
+    const pv = Math.max(0, Number(slot.pvKwh ?? 0));
+    const house = Math.max(0, Number(slot.houseKwh ?? 0));
+    // Solar supplies the home first, then charges the battery.
+    const directSolar = Math.min(pv, house);
+    const solarSurplus = pv - directSolar;
+    const houseDeficit = house - directSolar;
+    const batteryToHouse = Math.min(houseDeficit, (stored - floorKwh) * C.dischargeEff,
+      C.preferred * duration);
+    stored -= batteryToHouse / C.dischargeEff;
+    unmetHouseKwh += houseDeficit - batteryToHouse;
+    gridImportKwh += houseDeficit - batteryToHouse;
+    const solarToBattery = Math.min(solarSurplus, C.preferred * duration,
+      (capacity - stored) / C.chargeEff);
+    stored += solarToBattery * C.chargeEff;
+    gridExportKwh += solarSurplus - solarToBattery;
+    // Forced export may stop at the selected cutoff; ordinary house use
+    // above was allowed to continue down to the separate 10% floor.
+    if (slot.forceExport) {
+      const available = Math.max(0, stored - capacity * cutoff) * C.dischargeEff;
+      const exportEnergy = Math.min(available, C.preferred * duration);
+      stored -= exportEnergy / C.dischargeEff;
+      gridExportKwh += exportEnergy;
+    }
+    // Optional off-peak grid charge; caller determines permitted time slots.
+    const requestedCharge = Math.max(0, Number(slot.gridChargeKwh ?? 0));
+    const charge = Math.min(requestedCharge, C.preferred * duration,
+      (capacity - stored) / C.chargeEff);
+    stored += charge * C.chargeEff;
+    gridImportKwh += charge;
+    timeline.push({soc: 100 * stored / capacity, storedKwh: stored,
+      gridImportKwh, gridExportKwh});
+  }
+  return {endSoc: 100 * stored / capacity, gridImportKwh,
+    gridExportKwh, unmetHouseKwh, timeline};
+}
 function learned(){let a=JSON.parse(localStorage.pvActualsV2||"[]").filter(x=>x.pred>1&&x.kwh>=0);if(!a.length)return 1;let r=a.slice(-14).map(x=>x.kwh/x.pred).sort((a,b)=>a-b),m=r[Math.floor(r.length/2)];return Math.max(.8,Math.min(1.2,m))}
 async function run(){ $("forecast").textContent="Calculating…";try{let u='https://api.open-meteo.com/v1/forecast?latitude='+C.lat+'&longitude='+C.lon+'&hourly=shortwave_radiation,temperature_2m&forecast_days=3&timezone=Europe%2FLondon',j=await(await fetch(u)).json(),d=new Date();d.setDate(d.getDate()+1);let ds=d.toLocaleDateString('en-CA',{timeZone:'Europe/London'}),pv=Array(24).fill(0),corr=learned();j.hourly.time.forEach((s,i)=>{if(s.slice(0,10)==ds){let h=+s.slice(11,13),t=new Date(s+":00"),g=j.hourly.shortwave_radiation[i]||0,amb=j.hourly.temperature_2m[i]||10,p1=poa(g,t,C.az1)*C.n1*C.panelW/1000/1000,p2=poa(g,t,C.az2)*C.n2*C.panelW/1000/1000,irr=Math.max(0,(poa(g,t,C.az1)+poa(g,t,C.az2))/2),cell=amb+.03*irr,temp=Math.max(.75,1-.0029*Math.max(0,cell-25));pv[h]=Math.min(C.maxInv,(p1+p2)*temp*C.baseLoss*corr)}});let total=pv.reduce((a,b)=>a+b,0),use=Math.max(.5,+$("dailyUse").value||5.8),w=loadWeights(),measured=getHourlyLoads(),localMeasured=measured?getLocalHourlyLoads(measured,d):null,loads=w.map((x,h)=>localMeasured&&localMeasured[h]!==null?localMeasured[h]:x*use),now=Math.max(C.minSoc,Math.min(1,(+$("nowSoc").value||50)/100)),minK=C.batt*C.minSoc,resK=C.batt*C.reserve16;
 function sim(start){let b=C.batt*start,b16=b;for(let h=0;h<24;h++){let net=pv[h]-loads[h];if(net>=0)b=Math.min(C.batt,b+Math.min(net,C.preferred)*C.chargeEff);else b=Math.max(minK,b-Math.min(-net,C.preferred)/C.dischargeEff);if(h===15)b16=b}return b16}

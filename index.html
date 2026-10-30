@@ -274,12 +274,14 @@ async function importFoxHistory(){
  if(!token){status.textContent="Connect FOX Cloud first.";return}
  status.textContent="Requesting historical PV data from FOX…";
  try{
-  const url="https://fox-pv-connector.peter-droegemueller.workers.dev/energyReport?startDate=2026-10-01&endDate=2026-10-29";
+  const url="https://fox-pv-connector.peter-droegemueller.workers.dev/energy?year=2026&month=10&dimension=day";
   const response=await fetch(url,{headers:{Authorization:"Bearer "+token},cache:"no-store"});
   const data=await response.json();
   if(!response.ok)throw new Error("HTTP "+response.status+": "+String(data.error||data.message||"Request rejected"));
   const candidates=[data,data.data,data.result,data.records,data.days,data.daily,data.data?.records,data.data?.days,data.data?.daily].filter(Array.isArray);
   const records=candidates.find(a=>a.length&&typeof a[0]==="object")||[];
+  if(!records.length){const preview=JSON.stringify(data).slice(0,650);status.textContent="FOX responded, but no daily rows were identified. Response sample: "+preview;return}
+
   const saved=accuracyData();let count=0;
   for(const row of records){
    const date=String(row.date||row.day||row.time||row.reportDate||"").slice(0,10);
@@ -290,7 +292,7 @@ async function importFoxHistory(){
     saved[date].actual=actual;count++;
    }
   }
-  if(!count){status.textContent="FOX responded, but the format needs mapping. Fields: "+Object.keys(data).slice(0,12).join(", ")+"; records: "+records.length+". No values imported.";return}
+  if(!count){status.textContent="FOX responded, but the format needs mapping. Fields: "+Object.keys(data).slice(0,12).join(", ")+"; records: "+records.length+". First record: "+JSON.stringify(records[0]).slice(0,500)+". No values imported.";return}
   localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
   status.textContent="Imported "+count+" daily PV measurements from FOX.";
   showAccuracy();await loadOctoberBacktest();

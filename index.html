@@ -11,6 +11,7 @@
 <div class="card"><b>Inputs for tomorrow</b><div class="grid"><label>Battery SOC now (%)<input id="nowSoc" type="number" min="10" max="100" step="1" value="50"></label><button id="connectFox" type="button">Connect FOX Cloud</button><button id="disconnectFox" type="button" hidden>Disconnect FOX Cloud</button><span id="foxStatus" class="small">Manual SOC</span><label>Expected house use (kWh/day)<input id="dailyUse" type="number" min=".5" max="20" step=".1" value="5.8"></label></div><button id="update">Update forecast & plan</button><div class="small">House-use profile is estimated hourly; change daily use if tomorrow will be unusual.</div></div>
 <div class="card"><b>System model</b><table><tr><td>PV array</td><td>6.565 kWp</td></tr><tr><td>Panels</td><td>13 × Prime 505 W</td></tr><tr><td>Battery</td><td>2 × EP6 = 11.52 kWh nominal</td></tr><tr><td>Battery operating window</td><td>10–100% SOC</td></tr><tr><td>Battery round-trip efficiency</td><td>≥95%</td></tr><tr><td>Inverter</td><td>FOX H1-6.0-E-G2 · 6 kW</td></tr><tr><td>Preferred battery power</td><td>4 kW</td></tr><tr><td>Panel temperature coefficient</td><td>−0.29%/°C</td></tr></table><div><span class="tag">No assumed bifacial gain</span><span class="tag">Hourly simulation</span><span class="tag">Two roof faces</span></div></div>
 <div class="card"><b>Flux assumptions</b><table><tr><td>Cheap import</td><td>14.67p/kWh</td></tr><tr><td>Day export</td><td>9.79p/kWh</td></tr><tr><td>16–19 export</td><td>27.81p/kWh</td></tr><tr><td>16:00 reserve target</td><td>25%</td></tr></table><div class="small">V2 charges overnight only enough to protect the 16:00 reserve under the forecast and expected house load. Deliberate grid-to-export arbitrage is not assumed.</div></div>
+<div class="card"><b>October 2026 — archived forecast back-test</b><p class="small">Uses Open-Meteo's archived 24-hour-ahead solar-radiation forecast, not retrospective sunshine observations. Calculations use the existing V3 roof and panel model, without learned correction. Actual FOX production is shown only when a measured daily value has been entered below.</p><button id="backtest">Load October archived forecasts</button><div id="backtestStatus" class="small">Not loaded</div><div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Forecast</th><th>FOX actual</th><th>Difference</th></tr></thead><tbody id="backtestRows"></tbody></table></div></div>
 <div class="card"><b>PV forecast accuracy — daily comparison</b><p class="small">The first forecast saved for each target day is retained. After that day finishes, enter the FOX daily PV generation to compare like-for-like. Data is stored in this browser only.</p><label>Actual generation date <input id="actualDate" type="date"></label><input id="actual" type="number" min="0" step=".1" placeholder="FOX actual PV generation (kWh)"><button id="save">Compare and save actual</button><div id="saved" class="small"></div><div id="accuracySummary" class="small">Awaiting matched forecasts…</div><table><thead><tr><th>Date</th><th>Forecast</th><th>Actual</th><th>Error</th></tr></thead><tbody id="accuracyRows"></tbody></table><div class="small">A daily error can be caused by weather forecast uncertainty, shading, curtailment or model conversion. Correction is limited and requires at least 5 matched days.</div></div>
 <div class="small">Forecast uses Open-Meteo irradiance/temperature, solar geometry and an hourly battery/load simulation. Forecasts remain estimates.</div>
 <script>
@@ -267,6 +268,31 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
     cutoffLow,cutoffHigh,cutoffBaseline,cutoffBest,
     eveningStartSoc:eveningStart*100};
 }
+async function loadOctoberBacktest(){
+  $("backtestStatus").textContent="Loading archived day-ahead forecasts…";
+  try{
+    const url="https://previous-runs-api.open-meteo.com/v1/forecast?latitude="+C.lat+"&longitude="+C.lon+"&start_date=2026-10-01&end_date=2026-10-29&hourly=shortwave_radiation_previous_day1,temperature_2m_previous_day1&timezone=Europe%2FLondon";
+    const response=await fetch(url,{cache:"no-store"});
+    if(!response.ok)throw new Error("Open-Meteo HTTP "+response.status);
+    const data=await response.json(),h=data.hourly;
+    if(!h||!Array.isArray(h.time)||!Array.isArray(h.shortwave_radiation_previous_day1))throw new Error(data.reason||"Archived radiation unavailable");
+    const daily={};
+    h.time.forEach((time,i)=>{
+      const date=time.slice(0,10),rad=Number(h.shortwave_radiation_previous_day1[i]),amb=Number(h.temperature_2m_previous_day1?.[i]);
+      if(date>="2026-10-30"||!Number.isFinite(rad))return;
+      const t=new Date(time+":00"),p1=poa(rad,t,C.az1),p2=poa(rad,t,C.az2);
+      const irr=Math.max(0,(p1+p2)/2),cell=(Number.isFinite(amb)?amb:10)+.03*irr;
+      const temp=Math.max(.75,1-.0029*Math.max(0,cell-25));
+      const kwh=Math.min(C.maxInv,(p1*C.n1+p2*C.n2)*C.panelW/1000000*temp*C.baseLoss);
+      daily[date]=(daily[date]||0)+kwh;
+    });
+    const entries=Object.entries(daily).sort((a,b)=>a[0].localeCompare(b[0])),saved=accuracyData();
+    const rows=entries.map(([date,pred])=>{const actual=saved[date]?.actual;const has=Number.isFinite(actual);return "<tr><td>"+date+"</td><td>"+pred.toFixed(1)+" kWh</td><td>"+(has?actual.toFixed(1)+" kWh":"—")+"</td><td>"+(has?(actual-pred).toFixed(1)+" kWh":"—")+"</td></tr>"});
+    $("backtestRows").innerHTML=rows.join("");
+    const paired=entries.filter(([d])=>Number.isFinite(saved[d]?.actual));
+    $("backtestStatus").textContent=entries.length+" days reconstructed from archived forecasts; "+paired.length+" matched with FOX actuals."+(paired.length?" Mean absolute error "+(paired.reduce((sum,[d,p])=>sum+Math.abs(saved[d].actual-p),0)/paired.length).toFixed(2)+" kWh.":" FOX historical measurements still need importing.");
+  }catch(e){$("backtestStatus").textContent="Back-test unavailable: "+e.message}
+}
 function ukDay(d=new Date()){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"}).format(d)}
 function dayAfter(date,n){const d=new Date(date+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
 function accuracyData(){try{return JSON.parse(localStorage.getItem("pvForecastValidationV3")||"{}")}catch(e){return {}}}
@@ -395,7 +421,7 @@ $("peak").textContent="…";
 $("peakKwh").textContent="Full-horizon forecast pending";
 $("actionWhy").textContent="Using current SOC, forecast solar and FOX household consumption.";
 }catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
-$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();run();if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
+$("backtest").onclick=loadOctoberBacktest;$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();run();if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =
   "https://fox-pv-connector.peter-droegemueller.workers.dev/consumption-profile";

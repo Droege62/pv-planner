@@ -6,6 +6,7 @@
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
 <div class="card"><b>Tomorrow at a glance</b><table><tr><td>Expected house use before 16:00</td><td id="use16">—</td></tr><tr><td>Expected PV before 16:00</td><td id="pv16">—</td></tr><tr><td>Expected PV after 16:00</td><td id="pvAfter">—</td></tr><tr><td>Likely solar surplus after house use</td><td id="surplus">—</td></tr></table></div>
+<div class="card"><b>Tomorrow evening: discharge cutoff comparison</b><div class="small">Minimum saving before suggesting a change: <input id="cutoffThreshold" type="number" min="0" max="500" step="5" value="20" style="width:72px"> pence</div><div id="cutoffAdvice" class="sub" style="margin:10px 0">Calculating…</div><table id="cutoffTable"><thead><tr><th>Cutoff</th><th>Net value</th><th>vs 25%</th></tr></thead><tbody></tbody></table><div class="small">Modelled 16:00–02:00 value includes remaining battery energy at cheap replacement cost; excludes battery wear and shared overnight charge. Advisory only.</div></div>
 <div class="card"><b>V3 battery simulator — diagnostic only</b><div id="v3SimDiagnostic" class="sub">Waiting for forecast…</div><div id="v3FullHorizon" class="sub" style="margin-top:10px">Calculating current-to-tomorrow timeline…</div><div class="small">Hypothetical test: 100% SOC at midnight, no grid charging or forced export. Not a charging recommendation.</div></div>
 <div class="card"><b>Inputs for tomorrow</b><div class="grid"><label>Battery SOC now (%)<input id="nowSoc" type="number" min="10" max="100" step="1" value="50"></label><button id="connectFox" type="button">Connect FOX Cloud</button><button id="disconnectFox" type="button" hidden>Disconnect FOX Cloud</button><span id="foxStatus" class="small">Manual SOC</span><label>Expected house use (kWh/day)<input id="dailyUse" type="number" min=".5" max="20" step=".1" value="5.8"></label></div><button id="update">Update forecast & plan</button><div class="small">House-use profile is estimated hourly; change daily use if tomorrow will be unusual.</div></div>
 <div class="card"><b>System model</b><table><tr><td>PV array</td><td>6.565 kWp</td></tr><tr><td>Panels</td><td>13 × Prime 505 W</td></tr><tr><td>Battery</td><td>2 × EP6 = 11.52 kWh nominal</td></tr><tr><td>Battery operating window</td><td>10–100% SOC</td></tr><tr><td>Battery round-trip efficiency</td><td>≥95%</td></tr><tr><td>Inverter</td><td>FOX H1-6.0-E-G2 · 6 kW</td></tr><tr><td>Preferred battery power</td><td>4 kW</td></tr><tr><td>Panel temperature coefficient</td><td>−0.29%/°C</td></tr></table><div><span class="tag">No assumed bifacial gain</span><span class="tag">Hourly simulation</span><span class="tag">Two roof faces</span></div></div>
@@ -311,6 +312,24 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
       chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
+    const thresholdPence = Math.max(0, Math.min(500, Number($("cutoffThreshold").value) || 0));
+    const cutoffRows = [cutoffLow,cutoffBaseline,cutoffHigh,cutoffBest]
+      .filter((x,i,a)=>x && a.findIndex(y=>y && y.pct===x.pct)===i);
+    $("cutoffTable").querySelector("tbody").innerHTML = cutoffRows.map(x =>
+      "<tr><td>"+x.pct+"%"+(x===cutoffBest?" (best)":"")+"</td><td>£"+
+      (x.netPence/100).toFixed(2)+"</td><td>"+
+      (cutoffBaseline ? ((x.netPence-cutoffBaseline.netPence)>=0?"+":"")+
+      ((x.netPence-cutoffBaseline.netPence)/100).toFixed(2) : "—")+
+      "</td></tr>").join("");
+    const gainPence = cutoffBest && cutoffBaseline ?
+      cutoffBest.netPence-cutoffBaseline.netPence : 0;
+    $("cutoffAdvice").textContent = !cutoffBest || !cutoffBaseline ?
+      "Financial comparison unavailable." :
+      cutoffBest.pct===25 || gainPence < thresholdPence ?
+      "Keep current 25% cutoff. Modelled best: "+cutoffBest.pct+
+      "%, saving only "+gainPence.toFixed(0)+"p (threshold "+thresholdPence+"p)." :
+      "Consider "+cutoffBest.pct+"% cutoff: estimated saving "+
+      gainPence.toFixed(0)+"p versus 25% (threshold "+thresholdPence+"p). Manual change only.";
     const cutoffText = cutoffBest && cutoffBaseline ?
       "Tomorrow's financial cutoff comparison (16:00–02:00): " +
       "best modelled cutoff " + cutoffBest.pct + "%; net value " +

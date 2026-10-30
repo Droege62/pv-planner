@@ -292,7 +292,7 @@ async function importFoxHistory(){
     saved[date].actual=actual;count++;
    }
   }
-  if(!count){const report=data.report??data.data??data.result??{};const example=records[0]??null;status.textContent="FOX responded but no verified daily PV values imported. Report fields: "+Object.keys(report||{}).slice(0,15).join(", ")+"; record count: "+records.length+"; first record fields: "+(example?Object.keys(example).slice(0,15).join(", "):"none")+". Send this message so the format can be mapped safely.";return}
+  if(!count){const report=data.report??data.data??data.result??{};const sample=Array.isArray(report)?report.slice(0,3).map(x=>({variable:x?.variable??x?.name??null,fields:x&&typeof x==="object"?Object.keys(x):[],valuesType:Array.isArray(x?.values)?"array":typeof x?.values,valuesSample:Array.isArray(x?.values)?x.values.slice(0,3):null,dataSample:Array.isArray(x?.data)?x.data.slice(0,3):null})):null;status.textContent="FOX monthly report structure: "+JSON.stringify(sample??{fields:Object.keys(report).slice(0,12)}).slice(0,1400)+". No values imported; please send this diagnostic.";return}
   localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
   status.textContent="Imported "+count+" daily PV measurements from FOX.";
   showAccuracy();await loadOctoberBacktest();

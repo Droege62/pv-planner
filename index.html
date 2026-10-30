@@ -274,7 +274,7 @@ async function importFoxHistory(){
  if(!token){status.textContent="Connect FOX Cloud first.";return}
  status.textContent="Requesting historical PV data from FOX…";
  try{
-  const url="https://fox-pv-connector.peter-droegemueller.workers.dev/energy?year=2026&month=10&dimension=day";
+  const url="https://fox-pv-connector.peter-droegemueller.workers.dev/energy?year=2026&month=10&dimension=month";
   const response=await fetch(url,{headers:{Authorization:"Bearer "+token},cache:"no-store"});
   const data=await response.json();
   if(!response.ok)throw new Error("HTTP "+response.status+": "+String(data.detail||data.error||data.message||"Request rejected"));

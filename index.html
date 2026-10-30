@@ -278,21 +278,23 @@ async function importFoxHistory(){
   const response=await fetch(url,{headers:{Authorization:"Bearer "+token},cache:"no-store"});
   const data=await response.json();
   if(!response.ok)throw new Error("HTTP "+response.status+": "+String(data.detail||data.error||data.message||"Request rejected"));
-  const candidates=[data,data.data,data.result,data.records,data.days,data.daily,data.data?.records,data.data?.days,data.data?.daily].filter(Array.isArray);
-  const records=candidates.find(a=>a.length&&typeof a[0]==="object")||[];
-  if(!records.length){const preview=JSON.stringify(data).slice(0,650);status.textContent="FOX responded, but no daily rows were identified. Response sample: "+preview;return}
-
+  const report=data.report??data.data??data.result;
+  if(!Array.isArray(report))throw new Error("FOX monthly report was not an array.");
+  const generation=report.find(item=>item&&item.variable==="generation");
+  if(!generation||!Array.isArray(generation.values))throw new Error("FOX generation daily values were not found.");
+  const values=generation.values;
+  if(values.length<29||values.length>31)throw new Error("Unexpected October daily values count: "+values.length);
   const saved=accuracyData();let count=0;
-  for(const row of records){
-   const date=String(row.date||row.day||row.time||row.reportDate||"").slice(0,10);
-   const raw=row.pvGeneration??row.pvEnergy??row.pvYield??row.generation??row.pvKwh??row.pv_kwh;
+  for(let i=0;i<29;i++){
+   const raw=values[i];
+   if(raw===null||raw===undefined||raw==="")continue;
    const actual=Number(raw);
-   if(date.startsWith("2026-10-")&&date<"2026-10-30"&&raw!=null&&Number.isFinite(actual)&&actual>=0){
-    if(!saved[date])saved[date]={pred:null,correction:1};
-    saved[date].actual=actual;count++;
-   }
+   if(!Number.isFinite(actual)||actual<0)continue;
+   const date="2026-10-"+String(i+1).padStart(2,"0");
+   if(!saved[date])saved[date]={pred:null,correction:1};
+   saved[date].actual=actual;count++;
   }
-  if(!count){const report=data.report??data.data??data.result??{};const sample=Array.isArray(report)?report.slice(0,3).map(x=>({variable:x?.variable??x?.name??null,fields:x&&typeof x==="object"?Object.keys(x):[],valuesType:Array.isArray(x?.values)?"array":typeof x?.values,valuesSample:Array.isArray(x?.values)?x.values.slice(0,3):null,dataSample:Array.isArray(x?.data)?x.data.slice(0,3):null})):null;status.textContent="FOX monthly report structure: "+JSON.stringify(sample??{fields:Object.keys(report).slice(0,12)}).slice(0,1400)+". No values imported; please send this diagnostic.";return}
+  if(!count)throw new Error("FOX returned no valid October generation values.");
   localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
   status.textContent="Imported "+count+" daily PV measurements from FOX.";
   showAccuracy();await loadOctoberBacktest();

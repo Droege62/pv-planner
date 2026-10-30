@@ -292,7 +292,7 @@ async function importFoxHistory(){
     saved[date].actual=actual;count++;
    }
   }
-  if(!count){status.textContent="FOX responded, but the format needs mapping. Fields: "+Object.keys(data).slice(0,12).join(", ")+"; records: "+records.length+". First record: "+JSON.stringify(records[0]).slice(0,500)+". No values imported.";return}
+  if(!count){const report=data.report??data.data??data.result??{};const example=records[0]??null;status.textContent="FOX responded but no verified daily PV values imported. Report fields: "+Object.keys(report||{}).slice(0,15).join(", ")+"; record count: "+records.length+"; first record fields: "+(example?Object.keys(example).slice(0,15).join(", "):"none")+". Send this message so the format can be mapped safely.";return}
   localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
   status.textContent="Imported "+count+" daily PV measurements from FOX.";
   showAccuracy();await loadOctoberBacktest();

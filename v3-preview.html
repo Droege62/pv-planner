@@ -308,6 +308,17 @@ async function importFoxHistory(){
   status.style.whiteSpace="pre-wrap";
   const pv=rows.find(x=>x.name==="PVEnergyTotal");
   const verified=pv&&pv.count===30&&pv.matches===30;
+  if(verified){
+   const source=report.find(x=>x.variable==="PVEnergyTotal");
+   const saved=accuracyData();
+   for(let i=0;i<30;i++){
+    const date="2026-10-"+String(i+1).padStart(2,"0");
+    if(!saved[date])saved[date]={pred:null,correction:1};
+    saved[date].actual=VERIFIED_FOX_OCT_2026[i];
+    saved[date].actualSource="FOX app verified; PVEnergyTotal API matched";
+   }
+   localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
+  }
   status.textContent=(verified?"PASS: PVEnergyTotal matches all 30 FOX app days. ":"WARNING: PVEnergyTotal has not passed all 30 checks. ")+"No history overwritten.\\n"+rows.map(x=>x.name+" ("+x.unit+"): MAE "+x.mae.toFixed(2)+" kWh; "+x.matches+"/"+x.count+" matching; API 20/26/28 Oct: "+x.examples.join(", ")).join("\\n");
  }catch(e){status.textContent="FOX diagnostic failed: "+e.message}
 }

@@ -11,7 +11,7 @@
 <div class="card"><b>Inputs for tomorrow</b><div class="grid"><label>Battery SOC now (%)<input id="nowSoc" type="number" min="10" max="100" step="1" value="50"></label><button id="connectFox" type="button">Connect FOX Cloud</button><button id="disconnectFox" type="button" hidden>Disconnect FOX Cloud</button><span id="foxStatus" class="small">Manual SOC</span><label>Expected house use (kWh/day)<input id="dailyUse" type="number" min=".5" max="20" step=".1" value="5.8"></label></div><button id="update">Update forecast & plan</button><div class="small">House-use profile is estimated hourly; change daily use if tomorrow will be unusual.</div></div>
 <div class="card"><b>System model</b><table><tr><td>PV array</td><td>6.565 kWp</td></tr><tr><td>Panels</td><td>13 × Prime 505 W</td></tr><tr><td>Battery</td><td>2 × EP6 = 11.52 kWh nominal</td></tr><tr><td>Battery operating window</td><td>10–100% SOC</td></tr><tr><td>Battery round-trip efficiency</td><td>≥95%</td></tr><tr><td>Inverter</td><td>FOX H1-6.0-E-G2 · 6 kW</td></tr><tr><td>Preferred battery power</td><td>4 kW</td></tr><tr><td>Panel temperature coefficient</td><td>−0.29%/°C</td></tr></table><div><span class="tag">No assumed bifacial gain</span><span class="tag">Hourly simulation</span><span class="tag">Two roof faces</span></div></div>
 <div class="card"><b>Flux assumptions</b><table><tr><td>Cheap import</td><td>14.67p/kWh</td></tr><tr><td>Day export</td><td>9.79p/kWh</td></tr><tr><td>16–19 export</td><td>27.81p/kWh</td></tr><tr><td>16:00 reserve target</td><td>25%</td></tr></table><div class="small">V2 charges overnight only enough to protect the 16:00 reserve under the forecast and expected house load. Deliberate grid-to-export arbitrage is not assumed.</div></div>
-<div class="card"><b>October 2026 — archived forecast back-test</b><p class="small">Uses Open-Meteo's archived 24-hour-ahead solar-radiation forecast, not retrospective sunshine observations. Calculations use the existing V3 roof and panel model, without learned correction. Actual FOX production is shown only when a measured daily value has been entered below.</p><button id="backtest">Load October archived forecasts</button><button id="foxHistory" type="button">Import FOX October PV history</button><div id="foxHistoryStatus" class="small">FOX history not loaded</div><div id="backtestStatus" class="small">Not loaded</div><div id="backtestAnalysis" class="small"></div><div id="backtestTimezone" class="small"></div><div id="backtestChart" style="overflow-x:auto"></div><div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Forecast</th><th>FOX actual</th><th>Difference</th></tr></thead><tbody id="backtestRows"></tbody></table></div></div>
+<div class="card"><b>October 2026 — archived forecast back-test</b><p class="small">Uses Open-Meteo's archived 24-hour-ahead solar-radiation forecast, not retrospective sunshine observations. Calculations use the existing V3 roof and panel model, without learned correction. Actual FOX production is shown only when a measured daily value has been entered below.</p><button id="backtest">Load October archived forecasts</button><button id="foxHistory" type="button">Import FOX October PV history</button><div id="foxHistoryStatus" class="small">FOX history not loaded</div><div id="backtestStatus" class="small">Not loaded</div><div id="backtestAnalysis" class="small"></div><div id="backtestTimezone" class="small"></div><div id="backtestDiffuse" class="small"></div><div id="backtestChart" style="overflow-x:auto"></div><div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Forecast</th><th>FOX actual</th><th>Difference</th></tr></thead><tbody id="backtestRows"></tbody></table></div></div>
 <div class="card"><b>PV forecast accuracy — daily comparison</b><p class="small">The first forecast saved for each target day is retained. After that day finishes, enter the FOX daily PV generation to compare like-for-like. Data is stored in this browser only.</p><label>Actual generation date <input id="actualDate" type="date"></label><input id="actual" type="number" min="0" step=".1" placeholder="FOX actual PV generation (kWh)"><button id="save">Compare and save actual</button><div id="saved" class="small"></div><div id="accuracySummary" class="small">Awaiting matched forecasts…</div><table><thead><tr><th>Date</th><th>Forecast</th><th>Actual</th><th>Error</th></tr></thead><tbody id="accuracyRows"></tbody></table><div class="small">A daily error can be caused by weather forecast uncertainty, shading, curtailment or model conversion. Correction is limited and requires at least 5 matched days.</div></div>
 <div class="small">Forecast uses Open-Meteo irradiance/temperature, solar geometry and an hourly battery/load simulation. Forecasts remain estimates.</div>
 <script>
@@ -340,6 +340,30 @@ async function loadOctoberBacktest(){
         utcDaily[date]=(utcDaily[date]||0)+kwh;
       });
     }catch(e){utcIssue=e.message}
+    // Experimental split-radiation forecast: isolated from operational PV and battery planning.
+    let splitDaily=null,splitIssue="";
+    try{
+      const splitUrl="https://previous-runs-api.open-meteo.com/v1/forecast?latitude="+C.lat+"&longitude="+C.lon+"&start_date=2026-10-01&end_date=2026-10-29&hourly=shortwave_radiation_previous_day1,diffuse_radiation_previous_day1,direct_normal_irradiance_previous_day1,temperature_2m_previous_day1&timezone=UTC";
+      const sr=await fetch(splitUrl,{cache:"no-store"});
+      const sd=await sr.json();
+      if(!sr.ok)throw new Error(sd.reason||"Open-Meteo HTTP "+sr.status);
+      const sh=sd.hourly;
+      if(!sh||!Array.isArray(sh.time)||!Array.isArray(sh.diffuse_radiation_previous_day1)||!Array.isArray(sh.direct_normal_irradiance_previous_day1))throw new Error("Archived direct/diffuse forecasts unavailable");
+      const londonDay=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"});
+      const tilted=(dni,dhi,t,azDeg)=>{const p=sun(t);if(p.el<=0)return 0;const tilt=C.tilt*Math.PI/180,az=azDeg*Math.PI/180;const incidence=Math.sin(p.el)*Math.cos(tilt)+Math.cos(p.el)*Math.sin(tilt)*Math.cos(p.az-az);return Math.max(0,dni)*Math.max(0,incidence)+Math.max(0,dhi)*(1+Math.cos(tilt))/2;};
+      splitDaily={};
+      sh.time.forEach((time,i)=>{
+        const dni=Number(sh.direct_normal_irradiance_previous_day1[i]),dhi=Number(sh.diffuse_radiation_previous_day1[i]);
+        if(!Number.isFinite(dni)||!Number.isFinite(dhi))return;
+        const t=new Date(time+":00Z"),date=londonDay.format(t);
+        if(date<"2026-10-01"||date>"2026-10-29")return;
+        const p1=tilted(dni,dhi,t,C.az1),p2=tilted(dni,dhi,t,C.az2);
+        const amb=Number(sh.temperature_2m_previous_day1?.[i]),irr=Math.max(0,(p1+p2)/2),cell=(Number.isFinite(amb)?amb:10)+.03*irr;
+        const temp=Math.max(.75,1-.0029*Math.max(0,cell-25));
+        const kwh=Math.min(C.maxInv,(p1*C.n1+p2*C.n2)*C.panelW/1000000*temp*C.baseLoss);
+        splitDaily[date]=(splitDaily[date]||0)+kwh;
+      });
+    }catch(e){splitIssue=e.message}
     const entries=Object.entries(daily).sort((a,b)=>a[0].localeCompare(b[0])),saved=accuracyData();
     const rows=entries.map(([date,pred])=>{const actual=saved[date]?.actual;const has=Number.isFinite(actual);return "<tr><td>"+date+"</td><td>"+pred.toFixed(1)+" kWh</td><td>"+(has?actual.toFixed(1)+" kWh":"—")+"</td><td>"+(has?(actual-pred).toFixed(1)+" kWh":"—")+"</td></tr>"});
     $("backtestRows").innerHTML=rows.join("");
@@ -352,6 +376,12 @@ async function loadOctoberBacktest(){
       const heldOld=held.length?mae(held,(d,p)=>p):null,heldNew=held.length?mae(held,d=>utcDaily[d]):null;
       $("backtestTimezone").textContent="Build 24 UTC time-handling experiment (not applied to live forecast): matched "+timezonePairs.length+" days. Original MAE "+oldMAE.toFixed(2)+" kWh; UTC-corrected MAE "+utcMAE.toFixed(2)+" kWh. Held-out 21–29 Oct: original "+(heldOld===null?"n/a":heldOld.toFixed(2))+" kWh, UTC-corrected "+(heldNew===null?"n/a":heldNew.toFixed(2))+" kWh. This tests timestamp handling only, not a new radiation model.";
     }else{$("backtestTimezone").textContent="UTC experiment unavailable: "+(utcIssue||"No matching days");}
+    const splitPairs=paired.filter(([d])=>splitDaily&&Number.isFinite(splitDaily[d]));
+    if(splitPairs.length){
+      const error=(arr,fn)=>arr.reduce((total,[d,p])=>total+Math.abs(saved[d].actual-fn(d,p)),0)/arr.length;
+      const held=splitPairs.filter(([d])=>d>="2026-10-21");
+      $("backtestDiffuse").textContent="Build 25 direct/diffuse experiment: "+splitPairs.length+" matched days; original MAE "+error(splitPairs,(d,p)=>p).toFixed(2)+" kWh, split-radiation MAE "+error(splitPairs,d=>splitDaily[d]).toFixed(2)+" kWh. Held-out 21–29 Oct: original "+(held.length?error(held,(d,p)=>p).toFixed(2):"n/a")+" kWh, split "+(held.length?error(held,d=>splitDaily[d]).toFixed(2):"n/a")+" kWh. Experimental only; no live forecast changes.";
+    }else{$("backtestDiffuse").textContent="Build 25 direct/diffuse experiment unavailable: "+(splitIssue||"No matched days")+". Existing model unchanged.";}
     if(paired.length){
       const n=paired.length;
       const bias=paired.reduce((sum,[d,p])=>sum+saved[d].actual-p,0)/n;

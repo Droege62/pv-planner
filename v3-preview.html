@@ -307,6 +307,12 @@ async function importFoxHistory(){
    return {name:x.variable,unit:x.unit,count,mae:count?total/count:Infinity,matches,examples:[19,25,27].map(i=>x.values[i])};
   }).sort((x,y)=>x.mae-y.mae);
   status.style.whiteSpace="pre-wrap";
+  const loadRow=report.find(x=>x.variable==="loads");
+  const loadValues=loadRow&&Array.isArray(loadRow.values)?loadRow.values:[];
+  const loadErrors=VERIFIED_FOX_LOAD_OCT_2026.map((v,i)=>Number(loadValues[i])-v);
+  const loadValid=loadErrors.filter((e,i)=>loadValues[i]!=null&&Number.isFinite(e));
+  const loadMAE=loadValid.length?loadValid.reduce((sum,e)=>sum+Math.abs(e),0)/loadValid.length:NaN;
+  const loadMatches=loadValid.filter(e=>Math.abs(e)<=0.15).length;
   const pv=rows.find(x=>x.name==="PVEnergyTotal");
   const verified=pv&&pv.count===30&&pv.matches===30;
   if(verified){

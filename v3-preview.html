@@ -306,7 +306,9 @@ async function importFoxHistory(){
    return {name:x.variable,unit:x.unit,count,mae:count?total/count:Infinity,matches,examples:[19,25,27].map(i=>x.values[i])};
   }).sort((x,y)=>x.mae-y.mae);
   status.style.whiteSpace="pre-wrap";
-  status.textContent="Read-only comparison. Verified measurements unchanged.\n"+rows.map(x=>x.name+" ("+x.unit+"): MAE "+x.mae.toFixed(2)+" kWh; "+x.matches+"/"+x.count+" matching; API 20/26/28 Oct: "+x.examples.join(", ")).join("\n");
+  const pv=rows.find(x=>x.name==="PVEnergyTotal");
+  const verified=pv&&pv.count===30&&pv.matches===30;
+  status.textContent=(verified?"PASS: PVEnergyTotal matches all 30 FOX app days. ":"WARNING: PVEnergyTotal has not passed all 30 checks. ")+"No history overwritten.\\n"+rows.map(x=>x.name+" ("+x.unit+"): MAE "+x.mae.toFixed(2)+" kWh; "+x.matches+"/"+x.count+" matching; API 20/26/28 Oct: "+x.examples.join(", ")).join("\\n");
  }catch(e){status.textContent="FOX diagnostic failed: "+e.message}
 }
 async function loadOctoberBacktest(){

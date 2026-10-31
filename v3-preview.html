@@ -328,6 +328,7 @@ async function importFoxHistory(){
    localStorage.setItem("pvForecastValidationV3",JSON.stringify(saved));
   }
   status.textContent=(verified?"PASS: PVEnergyTotal matches all 30 FOX app days. ":"WARNING: PVEnergyTotal has not passed all 30 checks. ")+"No history overwritten.\\n"+rows.map(x=>x.name+" ("+x.unit+"): MAE "+x.mae.toFixed(2)+" kWh; "+x.matches+"/"+x.count+" matching; API 20/26/28 Oct: "+x.examples.join(", ")).join("\\n");
+  status.textContent += String.fromCharCode(10)+status.dataset.loadSummary;
  }catch(e){status.textContent="FOX diagnostic failed: "+e.message}
 }
 async function loadOctoberBacktest(){

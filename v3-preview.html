@@ -313,7 +313,7 @@ async function importFoxHistory(){
   const loadValid=loadErrors.filter((e,i)=>loadValues[i]!=null&&Number.isFinite(e));
   const loadMAE=loadValid.length?loadValid.reduce((sum,e)=>sum+Math.abs(e),0)/loadValid.length:NaN;
   const loadMatches=loadValid.filter(e=>Math.abs(e)<=0.15).length;
-  status.dataset.loadSummary="LOAD: "+loadMatches+"/"+loadValid.length+" matching; MAE "+loadMAE.toFixed(2)+" kWh; API 20/26/28 Oct: "+[19,25,27].map(i=>loadValues[i]).join(", ");
+  status.dataset.loadSummary="LOAD: +loadMatches+"/"+loadValid.length+" matching; MAE "+loadMAE.toFixed(2)+" kWh; API 20/26/28 Oct: "+[19,25,27].map(i=>loadValues[i]).join(", ");
   const pv=rows.find(x=>x.name==="PVEnergyTotal");
   const verified=pv&&pv.count===30&&pv.matches===30;
   if(verified){

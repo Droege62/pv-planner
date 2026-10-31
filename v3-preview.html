@@ -578,6 +578,22 @@ $("peak").textContent="…";
 $("peakKwh").textContent="Full-horizon forecast pending";
 $("actionWhy").textContent="Using current SOC, forecast solar and FOX household consumption.";
 }catch(e){$("forecast").textContent="Forecast unavailable";$("range").textContent="Check internet connection."}}
+$("foxEnergyDiagnostic").onclick=async()=>{
+ const el=$("foxEnergyStatus"),token=localStorage.getItem("pvFoxAccessToken");
+ if(!token){el.textContent="Connect FOX Cloud first.";return}
+ el.textContent="Checking FOX report energy variables...";
+ try{
+  const response=await fetch("https://fox-pv-connector.peter-droegemueller.workers.dev/energy?year=2026&month=10&dimension=month",{headers:{Authorization:"Bearer "+token},cache:"no-store"});
+  if(!response.ok)throw Error("HTTP "+response.status);
+  const data=await response.json(),report=data.report??data.data??data.result;
+  if(!Array.isArray(report))throw Error("Unexpected report format");
+  const variables=["PVEnergyTotal","loads","gridConsumption","feedin","chargeEnergyToTal","dischargeEnergyToTal","generation"];
+  const day=26,i=day-1;
+  const lines=variables.map(name=>{const x=report.find(v=>v.variable===name);return name+": "+(x&&Array.isArray(x.values)?x.values[i]:"unavailable")+" "+(x?.unit??"")});
+  el.style.whiteSpace="pre-wrap";
+  el.textContent="FOX API report, 26 October 2026 (daily energy totals, not hourly SOC):"+String.fromCharCode(10)+lines.join(String.fromCharCode(10))+String.fromCharCode(10)+"App reference: PV 2.8 kWh, load 5.4 kWh, grid import 9.9 kWh, export 6.3 kWh. Battery SOC graph: ~15% overnight, ~100% by 16:00, ~30% after evening discharge. These totals cannot reconstruct the hourly SOC curve.";
+ }catch(e){el.textContent="FOX diagnostic unavailable: "+e.message}
+};
 installVerifiedOctober();$("backtest").onclick=loadOctoberBacktest;$("foxHistory").onclick=importFoxHistory;$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();run();/* Preview: no service worker */
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =

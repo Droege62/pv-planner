@@ -594,6 +594,21 @@ $("foxEnergyDiagnostic").onclick=async()=>{
   el.textContent="FOX API report, 26 October 2026 (daily energy totals, not hourly SOC):"+String.fromCharCode(10)+lines.join(String.fromCharCode(10))+String.fromCharCode(10)+"App reference: PV 2.8 kWh, load 5.4 kWh, grid import 9.9 kWh, export 6.3 kWh. Battery SOC graph: ~15% overnight, ~100% by 16:00, ~30% after evening discharge. These totals cannot reconstruct the hourly SOC curve.";
  }catch(e){el.textContent="FOX diagnostic unavailable: "+e.message}
 };
+$("foxHistoryProbe").onclick=async()=>{
+ const el=$("foxHistoryProbeStatus");
+ const token=localStorage.getItem("pvFoxAccessToken");
+ if(!token){el.textContent="Connect FOX Cloud first.";return}
+ el.textContent="Checking whether the Worker exposes historical SOC...";
+ try{
+  const url="https://fox-pv-connector.peter-droegemueller.workers.dev/history?date=2026-10-26";
+  const response=await fetch(url,{headers:{Authorization:"Bearer "+token},cache:"no-store"});
+  if(response.status===404){el.textContent="Historical SOC endpoint not available (HTTP 404). The Cloudflare Worker needs a read-only history route.";return}
+  if(!response.ok){el.textContent="History request returned HTTP "+response.status+". No settings changed.";return}
+  const data=await response.json();
+  const summary=Array.isArray(data)?("array with "+data.length+" records"):("response keys: "+Object.keys(data).join(", "));
+  el.textContent="History route responded: "+summary+". Data structure requires validation before SOC back-testing.";
+ }catch(e){el.textContent="History probe unavailable: "+e.message}
+};
 installVerifiedOctober();$("backtest").onclick=loadOctoberBacktest;$("foxHistory").onclick=importFoxHistory;$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();run();/* Preview: no service worker */
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =

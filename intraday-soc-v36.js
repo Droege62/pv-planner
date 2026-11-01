@@ -21,7 +21,7 @@
     fetch("https://api.open-meteo.com/v1/forecast?latitude="+C.lat+"&longitude="+C.lon+"&hourly=shortwave_radiation&forecast_days=2&timezone=UTC").then(r=>r.json()),
     fetch(base+"/consumption-profile",{headers:{Authorization:"Bearer "+token}}).then(r=>r.json()).catch(()=>null)
    ]);
-   const raw=live.soc??live.battery_soc??live.batterySoc;
+   const raw=live.batterySOC??live.soc??live.battery_soc??live.batterySoc;
    const soc=Number(raw);if(!Number.isFinite(soc))throw Error("Live SOC missing");
    const loads=Array(24).fill(.25);if(Array.isArray(profile?.hours))for(const x of profile.hours){const h=Number(x.utc_hour),p=Number(x.avg_power_kw);if(h>=0&&h<24&&Number.isFinite(p))loads[h]=p;}
    let energy=soc/100*C.batt,pvRemaining=0,loadRemaining=0;

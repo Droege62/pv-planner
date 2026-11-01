@@ -17,6 +17,23 @@ document.getElementById("run").onclick=async()=>{
     const td=document.createElement("td");td.textContent=String(value);tr.append(td);
    }tbody.append(tr);
   }
+  const forecastRows=document.getElementById("forecastRows");
+  const forecastStatus=document.getElementById("forecastStatus");
+  if(forecastRows&&forecastStatus){
+   forecastRows.replaceChildren();
+   const archive=JSON.parse(localStorage.getItem("pvSocForecastArchiveV3")||"{}");
+   let matches=0;
+   for(const x of result){
+    const predicted=archive[x.date]?.socAt16;
+    const valid=Number.isFinite(predicted)&&x.soc!==null;
+    if(valid)matches++;
+    const tr=document.createElement("tr");
+    const values=[x.date,Number.isFinite(predicted)?predicted+"%":"Not archived",x.soc===null?"Unavailable":x.soc+"%",valid?(x.soc-predicted)+" percentage points":"—"];
+    for(const value of values){const td=document.createElement("td");td.textContent=value;tr.append(td);}
+    forecastRows.append(tr);
+   }
+   forecastStatus.textContent=matches+" matched forecast/actual SOC pairs. New predictions are saved on this browser only.";
+  }
   status.textContent="Complete: "+result.filter(x=>x.soc!==null).length+" of "+result.length+" days have an SOC measurement within 15 minutes of 16:00 UTC.";
  }catch(error){status.textContent="Analysis failed: "+error.message;}
 };

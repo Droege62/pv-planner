@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1220"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="PV V3 Test"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><title>PV Planner V3 — TEST PREVIEW</title>
 <style>:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef2ff;background:#0b1220}*{box-sizing:border-box}body{margin:0;padding:18px;max-width:820px;margin:auto}.sub,.small{color:#a9b6ce}.small{font-size:.86rem}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{background:#151f32;border:1px solid #27344c;border-radius:16px;padding:16px;margin:12px 0}.big{font-size:2rem;font-weight:700}.good{color:#6ee7a8}.warn{color:#ffd166}button{width:100%;border:0;border-radius:12px;padding:14px;font-size:1rem;font-weight:700;margin-top:8px}input{width:100%;padding:10px;border-radius:10px;background:#0b1220;color:#fff;border:1px solid #40506b}table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px solid #27344c}label{display:block;margin:8px 0}.tag{display:inline-block;padding:4px 8px;border:1px solid #40506b;border-radius:999px;margin:3px;font-size:.8rem}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head><body>
-<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW · build 43</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — V3 overnight charging advice is experimental; do not apply automatically.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
+<h1>☀️ PV Planner <span class="small">V3 TEST PREVIEW · build 44</span></h1><div class="card" style="border-color:#ffd166;color:#ffd166">TEST VERSION — V3 overnight charging advice is experimental; do not apply automatically.</div><div class="sub">Studley · 13 × 505 W = 6.565 kWp · 8 SE + 5 opposite · 22°</div>
 <div class="card"><div class="small">Tomorrow's PV forecast</div><div id="forecast" class="big">—</div><div id="range" class="sub">Calculating…</div></div>
 <div class="card"><div class="small">Tonight's action</div><div id="action" class="big good">—</div><div id="actionWhy" class="sub">Calculating tomorrow's energy balance…</div></div>
 <div class="grid"><div class="card"><div class="small">Battery plan</div><div id="target" class="big good">—</div><div id="import" class="sub">—</div></div><div class="card"><div class="small">Predicted battery at 16:00</div><div id="peak" class="big">—</div><div id="peakKwh" class="sub">—</div></div></div>
@@ -198,15 +198,25 @@ async function simulateFromNowToTomorrow16(startSoc, measured, dailyUse, correct
   const withNightCharge = simulateTarget(.80);
   const maxNightCharge = simulateTarget(1);
   let minimumTarget = null, minimumResult = null;
-  if (noNightCharge.endSoc < 99.5 && maxNightCharge.endSoc >= 99.5) {
-    let low=C.minSoc, high=1;
-    for (let k=0;k<18;k++) {
-      const mid=(low+high)/2;
-      if (simulateTarget(mid).endSoc>=99.5) high=mid;
-      else low=mid;
+  // If 100% by 16:00 is impossible, find the smallest overnight target
+  // that gets within 0.5 SOC percentage points of the best achievable result.
+  // Never default to 100% merely because the 99.5% threshold cannot be reached.
+  if (noNightCharge.endSoc < 99.5) {
+    const attainable = Math.min(99.5, maxNightCharge.endSoc);
+    const acceptable = attainable - 0.5;
+    if (noNightCharge.endSoc >= acceptable) {
+      minimumTarget=C.minSoc;
+      minimumResult=noNightCharge;
+    } else {
+      let low=C.minSoc, high=1;
+      for (let k=0;k<18;k++) {
+        const mid=(low+high)/2;
+        if (simulateTarget(mid).endSoc>=acceptable) high=mid;
+        else low=mid;
+      }
+      minimumTarget=high;
+      minimumResult=simulateTarget(high);
     }
-    minimumTarget=high;
-    minimumResult=simulateTarget(high);
   }
   // Tomorrow's export window, followed by evening household consumption
   // until the next cheap charging window at 02:00.
@@ -483,7 +493,7 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
     // Never use the legacy 25%-reserve estimate as the visible advice.
     const skip = noNightCharge.endSoc >= 99.5;
     const chosen = skip ? noNightCharge : (minimumResult || maxNightCharge);
-    const plannedTarget = skip ? null : (minimumTarget === null ? 1 : minimumTarget);
+    const plannedTarget = skip ? null : minimumTarget;
     const chosenTimeline = chosen.timeline;
     const socAt = label => {
       const i=chosenTimeline.findIndex(x=>x.localLabel===label);
@@ -496,7 +506,7 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "; at 16:00: "+chosen.endSoc.toFixed(0)+"%. ";
     const gridKwh = skip ? 0 : chosen.cheapChargeKwh;
     $("action").textContent = skip ? "Skip overnight charging" :
-      minimumTarget !== null ? "Charge overnight" : "Charge overnight — target may be missed";
+      minimumTarget !== null ? "Charge overnight" : "Charge recommendation unavailable";
     $("action").className = "big " + (skip ? "good" : "warn");
     $("target").textContent = skip ? "No grid charge" :
       Math.ceil(plannedTarget * 100) + "% overnight target";
@@ -509,7 +519,7 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
       "Solar forecast reaches ~100% by 16:00 without overnight grid charging." :
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
-      chosen.endSoc.toFixed(0) + "%. Household grid imports are separate.";
+      chosen.endSoc.toFixed(0) + "%. Household grid imports are separate." + (maxNightCharge.endSoc < 99.5 ? " Forecast maximum is "+maxNightCharge.endSoc.toFixed(0)+"% even with a 100% overnight target; recommendation avoids unnecessary grid charging." : "");
     const thresholdPence = Math.max(0, Math.min(500, Number($("cutoffThreshold").value) || 0));
     const cutoffRows = [cutoffLow,cutoffBaseline,cutoffHigh,cutoffBest]
       .filter((x,i,a)=>x && a.findIndex(y=>y && y.pct===x.pct)===i);

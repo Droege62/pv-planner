@@ -467,9 +467,11 @@ $("consumptionSource").textContent = localMeasured && localMeasured.every(v => v
 $("consumptionDetails").textContent = localMeasured && localMeasured.some(v => v !== null) ? "Measured household consumption: " + loads.reduce((a,b)=>a+b,0).toFixed(1) + " kWh/day (UTC data aligned to UK time)" : "Using the original assumed hourly pattern";
 // Comparison diagnostic only; grid charge occurs in the 02:00–05:00 window.
 simulateFromNowToTomorrow16(now, measured, use, corr).then(
-  ({noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
+  ({diagnostic,noNightCharge,withNightCharge,maxNightCharge,minimumTarget,
     minimumResult,usefulSolarStart,slotCount,cutoffLow,cutoffHigh,
     cutoffBaseline,cutoffBest,eveningStartSoc}) => {
+    window.pvBatteryAudit43={...diagnostic,minimumTarget,startingSoc:now*100,
+      noCharge16:noNightCharge.endSoc,maxCharge16:maxNightCharge.endSoc};
     const fmt = n => n.toFixed(1);
     const solarTime = usefulSolarStart ?
       usefulSolarStart.toLocaleTimeString("en-GB",

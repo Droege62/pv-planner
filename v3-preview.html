@@ -528,7 +528,7 @@ simulateFromNowToTomorrow16(now, measured, use, corr).then(
     $("peak").textContent = chosen.endSoc.toFixed(0) + "%";
     $("peakKwh").textContent = (chosen.endSoc * C.batt / 100).toFixed(1) + " kWh stored";
     $("actionWhy").textContent = skip ?
-      "Solar forecast reaches ~100% by 16:00 without overnight grid charging." :
+      "Forecast reaches the selected "+desiredSoc+"% afternoon SOC goal without overnight grid charging." :
       "Without charging: " + noNightCharge.endSoc.toFixed(0) +
       "% by 16:00. With suggested overnight charging: " +
       chosen.endSoc.toFixed(0) + "%. Household grid imports are separate." + (maxNightCharge.endSoc < 99.5 ? " Forecast maximum is "+maxNightCharge.endSoc.toFixed(0)+"% even with a 100% overnight target; recommendation avoids unnecessary grid charging." : "");
@@ -645,7 +645,7 @@ $("foxHistoryProbe").onclick=async()=>{
   el.textContent="26 Oct 2026 (UTC): "+rows.length+" measurements, "+valid.length+" with SOC. First: "+format(first)+" (SOC "+soc(first)+"). Last: "+format(last)+" (SOC "+soc(last)+"). Nearest SOC within 30 minutes of 16:00 UTC: "+(near16?format(near16)+" = "+soc(near16):"none")+". This is measured data, not yet a forecast comparison.";
  }catch(e){el.textContent="History probe unavailable: "+e.message}
 };
-installVerifiedOctober();$("backtest").onclick=loadOctoberBacktest;$("foxHistory").onclick=importFoxHistory;$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();run();/* Preview: no service worker */
+installVerifiedOctober();$("backtest").onclick=loadOctoberBacktest;$("foxHistory").onclick=importFoxHistory;$("update").onclick=run;$("save").onclick=()=>{const date=$("actualDate").value,v=Number($("actual").value),a=accuracyData();if(!date||date>=ukDay()){$("saved").textContent="Choose a completed date before today.";return}if($("actual").value===""||!Number.isFinite(v)||v<0){$("saved").textContent="Enter valid FOX PV generation in kWh.";return}if(!a[date]){$("saved").textContent="No saved forecast for "+date+". Only dates forecast in advance can be compared.";return}a[date].actual=v;localStorage.setItem("pvForecastValidationV3",JSON.stringify(a));$("saved").textContent="Saved "+date+": forecast "+a[date].pred.toFixed(1)+" kWh, actual "+v.toFixed(1)+" kWh.";showAccuracy();run()};$("actualDate").value=dayAfter(ukDay(),-1);showAccuracy();document.getElementById("afternoonTarget47").addEventListener("change",run);run();/* Preview: no service worker */
 const FOX_URL = "https://fox-pv-connector.peter-droegemueller.workers.dev/summary";
   const FOX_PROFILE_URL =
   "https://fox-pv-connector.peter-droegemueller.workers.dev/consumption-profile";

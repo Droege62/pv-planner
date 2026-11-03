@@ -7,7 +7,7 @@ export async function handleForecastArchive(request, env) {
   if (!db) return Response.json({error:"D1 binding not configured"}, {status:503});
   if (request.method==="POST" && url.pathname==="/forecasts") {
     const body=await request.json().catch(()=>null);
-    if (!body || !/^\\d{4}-\\d{2}-\\d{2}$/.test(body.targetDate||""))
+    if (!body || !/^\d{4}-\d{2}-\d{2}$/.test(body.targetDate||""))
       return Response.json({error:"Invalid targetDate"}, {status:400});
     const now=new Date().toISOString(),created=new Date(body.createdAt||"");
     if (!Number.isFinite(created.getTime()) || body.targetDate<=now.slice(0,10) || created.toISOString().slice(0,10)>=body.targetDate)

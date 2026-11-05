@@ -24,9 +24,10 @@ if(n>=70)days++;
 }
 const med=a=>{const s=a.slice().sort((a,b)=>a-b);return s.length?s[Math.floor(s.length/2)]:null};
 const profile=buckets.map(med),ready=days>=5&&profile.every(x=>x!==null);
-if(ready){foxConsumptionProfile=profile.map((avg_power_kw,utc_hour)=>({utc_hour,avg_power_kw}));if(typeof run==="function")run()}
-window.__pvLoadLearning53={status:ready?"ready":"insufficient",profile:ready?foxConsumptionProfile.map(x=>({...x})):null,days,samples};
+// Build 57: diagnostic only. Do NOT overwrite foxConsumptionProfile or rerun the planner.
+const learnedProfile=ready?profile.map((avg_power_kw,utc_hour)=>({utc_hour,avg_power_kw})):null;
+window.__pvLoadLearning53={status:ready?"ready":"insufficient",profile:learnedProfile,days,samples};
 const p=document.createElement("p");p.textContent="Non-Sunday days with at least 70 house-power readings: "+days+"; valid samples: "+samples+".";
-const q=document.createElement("p");q.textContent=ready?"Historical median household profile now used in V3 predictions.":"Existing FOX hourly consumption profile retained; insufficient validated 15-minute house-power data.";
+const q=document.createElement("p");q.textContent=ready?"Historical median calculated for diagnostics only; original FOX profile retained for V3 predictions.":"Original FOX profile retained; insufficient validated 15-minute house-power data.";
 out.replaceChildren(p,q);
 })();

@@ -3,7 +3,7 @@
   const panel = document.createElement("section");
   panel.className = "card";
   panel.innerHTML =
-    '<h3>Build 54 — household consumption comparison</h3>' +
+    '<h3>Build 55 — household consumption comparison</h3>' +
     '<div id="compare54">Loading comparison...</div>';
   document.body.append(panel);
 
@@ -31,20 +31,22 @@
     const data = await response.json();
     const original = data.hours;
 
-    // Wait for Build 53 to finish learning.
+    // Wait for the explicit completion signal from Build 53.
+    // foxConsumptionProfile is populated by the original FOX request first,
+    // so its length alone cannot prove that learning has finished.
     let learned = null;
-
-    for (let i = 0; i < 30; i++) {
-      if (
-        Array.isArray(foxConsumptionProfile) &&
-        foxConsumptionProfile.length === 24
-      ) {
-        learned = foxConsumptionProfile;
-        break;
-      }
-
+    let learning = null;
+    for (let i = 0; i < 120; i++) {
+      learning = window.__pvLoadLearning53;
+      if (learning && learning.status !== "loading") break;
       await new Promise(resolve => setTimeout(resolve, 500));
     }
+    if (!learning || learning.status !== "ready" ||
+        !Array.isArray(learning.profile)) {
+      throw new Error("Learned median not ready (" +
+        (learning ? learning.status : "no completion signal") + ")");
+    }
+    learned = learning.profile;
 
     if (!Array.isArray(original) || !learned) {
       throw new Error("Consumption profiles unavailable");
@@ -98,7 +100,7 @@
     const note = document.createElement("p");
     note.className = "small";
     note.textContent =
-      "Comparison of historical household consumption. " +
+      "Original FOX profile versus independently completed Build 53 median (" + learning.days + " qualifying days, " + learning.samples + " samples). " +
       "Build 53 uses the learned profile in V3. " +
       "The effect on predicted battery SOC and overnight " +
       "charging target will be checked separately.";
